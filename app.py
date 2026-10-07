@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -6,6 +7,7 @@ from solver.engine import analyze_snapshot
 from solver.model import BoardState
 from solver.candidates import analyze_state_domain
 from solver.lookahead import analyze_lookahead
+from solver.knowledge import propagate_knowledge
 
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=None)
@@ -26,6 +28,24 @@ def analyze_api():
     try:
         payload = request.get_json(force=True)
         return jsonify(analyze_snapshot(payload))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/knowledge")
+def knowledge_api():
+    try:
+        payload = request.get_json(force=True)
+        board = BoardState.from_snapshot(payload)
+        time_budget = float(payload.get("time_budget", 5.0))
+        result = propagate_knowledge(
+            board,
+            deadline=time.monotonic() + max(0.5, min(time_budget, 20.0)),
+            max_rounds=int(payload.get("max_rounds", 12)),
+            deep=bool(payload.get("deep", True)),
+            collect_actions=True,
+        )
+        return jsonify(result.to_dict())
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
