@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import time
 
 from .candidates import (
+    CandidateModel,
     DomainResult,
     analyze_shape,
     analyze_state_domain,
@@ -193,6 +194,17 @@ def find_basic_contradiction(board: BoardState):
                 f"State {state_id} needs at least {minimum} squares, but only "
                 f"{available} cells remain available to it."
             )
+
+        # Cheap geometric pruning: before invoking CP-SAT, make sure at least
+        # one board-preserving nontrivial symmetry can still extend the
+        # state's certain cells without crossing a known exclusion/other state.
+        if len(cells) >= 2 or board.marked_capitol_cell(state_id) is not None:
+            candidate_model = CandidateModel(board, state_id, time_limit=0.01)
+            if candidate_model.reason:
+                return (
+                    f"State {state_id} has no possible symmetry extension: "
+                    f"{candidate_model.reason}"
+                )
 
     minimum_total_area = sum(
         _state_min_size(board, state_id)
