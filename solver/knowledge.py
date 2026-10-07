@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import time
 
-from .candidates import DomainResult, analyze_state_domain
+from .candidates import DomainResult, analyze_shape, analyze_state_domain
 from .constraints import CELL_MIN_SIZES, is_locked_singleton_capitol, singleton_capitol_candidates
 from .model import BoardState
 from .puzzle import CLUES, N, from_index, index, label
@@ -263,6 +263,16 @@ def _apply_exact_shape(board, state_id, shape):
     shape = set(shape)
     newly_added = []
     newly_excluded = []
+
+    geometry = analyze_shape(shape)
+    if not geometry["valid"]:
+        raise ValueError(f"Exact shape for State {state_id} is not a legal symmetric state.")
+    inferred_capitol = geometry["capitol"]
+    existing_capitol = board.marked_capitol_cell(state_id)
+    if existing_capitol is not None and existing_capitol != inferred_capitol:
+        raise ValueError(f"Exact shape for State {state_id} conflicts with its known capitol.")
+    if inferred_capitol is not None:
+        board.manual_capitols[state_id] = index(inferred_capitol)
 
     for cell in shape:
         if board.state_at(cell) != state_id:
