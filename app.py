@@ -5,6 +5,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from solver.engine import analyze_snapshot
 from solver.model import BoardState
 from solver.candidates import analyze_state_domain
+from solver.lookahead import analyze_lookahead
 
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=None)
@@ -25,6 +26,26 @@ def analyze_api():
     try:
         payload = request.get_json(force=True)
         return jsonify(analyze_snapshot(payload))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/lookahead")
+def lookahead_api():
+    try:
+        payload = request.get_json(force=True)
+        board = BoardState.from_snapshot(payload)
+        depth = int(payload.get("depth", 2))
+        time_budget = float(payload.get("time_budget", 8.0))
+        max_nodes = int(payload.get("max_nodes", 28))
+        return jsonify(
+            analyze_lookahead(
+                board,
+                depth=depth,
+                time_budget=time_budget,
+                max_nodes=max_nodes,
+            )
+        )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
