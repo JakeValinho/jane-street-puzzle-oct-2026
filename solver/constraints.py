@@ -58,6 +58,29 @@ def singleton_capitol_candidates(board, clue_cell):
     return candidates
 
 
+
+def is_locked_singleton_capitol(board, cell):
+    """
+    True only when the knowledge base has proved that this state can contain
+    no square other than the supplied cell and has fixed its capitol there.
+
+    A one-cell shape merely painted by the user is still partial, so current
+    size == 1 by itself is not enough.
+    """
+    state_id = board.state_at(cell)
+    if state_id is None or board.current_size(state_id) != 1:
+        return False
+    if board.marked_capitol_cell(state_id) != cell:
+        return False
+
+    forbidden = board.forbidden_by_state.get(state_id, set())
+    return len(forbidden) >= board_size_minus_one()
+
+
+def board_size_minus_one():
+    from .puzzle import N
+    return N * N - 1
+
 def forced_singleton_capitols(board):
     forced = set()
     for cell, value in CLUES.items():
