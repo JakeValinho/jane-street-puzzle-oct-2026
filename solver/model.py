@@ -24,22 +24,40 @@ class BoardState:
             if value is None:
                 normalized.append(None)
             else:
-                normalized.append(int(value))
+                state_id = int(value)
+                if state_id <= 0:
+                    raise ValueError("state IDs must be positive integers")
+                normalized.append(state_id)
 
         caps = {}
         for state_id, cell_index in (data.get("manualCapitols") or {}).items():
-            caps[int(state_id)] = int(cell_index)
+            sid = int(state_id)
+            ci = int(cell_index)
+            if sid <= 0:
+                raise ValueError("capitol state IDs must be positive integers")
+            if not 0 <= ci < N * N:
+                raise ValueError(f"capitol cell index must be between 0 and {N * N - 1}")
+            caps[sid] = ci
 
         forbidden = {}
         for state_id, raw_cells in (data.get("forbiddenByState") or {}).items():
             sid = int(state_id)
+            if sid <= 0:
+                raise ValueError("forbidden-state IDs must be positive integers")
             cells = set()
             for raw in raw_cells:
                 if isinstance(raw, int):
+                    if not 0 <= raw < N * N:
+                        raise ValueError(f"forbidden cell index must be between 0 and {N * N - 1}")
                     cells.add(from_index(raw))
                 elif isinstance(raw, (list, tuple)) and len(raw) == 2:
                     # JSON form is 1-indexed for readability.
-                    cells.add((int(raw[0]) - 1, int(raw[1]) - 1))
+                    cell = (int(raw[0]) - 1, int(raw[1]) - 1)
+                    if not (0 <= cell[0] < N and 0 <= cell[1] < N):
+                        raise ValueError("forbidden cell coordinates must lie on the 11x11 board")
+                    cells.add(cell)
+                else:
+                    raise ValueError("forbidden cells must be indices or [row, col] pairs")
             forbidden[sid] = cells
 
         return cls(
