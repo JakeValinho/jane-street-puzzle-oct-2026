@@ -873,3 +873,75 @@ def probe_fresh_state(board: BoardState, cell, time_limit=0.25):
 
     witness, exact = cm.find()
     return witness is not None, exact, witness
+
+
+
+def validate_complete_board(board: BoardState):
+    """
+    Exact final-board validation used by backtracking search.
+
+    Returns (valid, reason). This checks every state's geometry/capitol and
+    recomputes the true multi-source shortest-path distances for all clues.
+    """
+    if any(owner is None for owner in board.assignments):
+        return False, "board is not complete"
+
+    state_cells = defaultdict(set)
+    for i, owner in enumerate(board.assignments):
+        state_cells[owner].add(from_index(i))
+
+    sizes = {}
+    capitols = []
+    for owner, cells in state_cells.items():
+        geometry = analyze_shape(cells)
+        if not geometry["valid"]:
+            return False, f"State {owner} is not a connected symmetric state"
+
+        marked = board.marked_capitol_cell(owner)
+        if marked is not None and geometry["capitol"] != marked:
+            return False, f"State {owner}'s final capitol conflicts with its known capitol"
+
+        sizes[owner] = len(cells)
+        if geometry["capitol"] is not None:
+            capitols.append(geometry["capitol"])
+
+    if any(owner not in state_cells for owner in board.manual_capitols):
+        return False, "a marked capitol belongs to a missing state"
+    if not capitols:
+        return False, "the completed partition has no capitols"
+
+    infinity = 10**18
+    dist = [infinity] * (N * N)
+    heap = []
+    for cell in capitols:
+        i = index(cell)
+        dist[i] = 0
+        heapq.heappush(heap, (0, i))
+
+    while heap:
+        current_distance, u = heapq.heappop(heap)
+        if current_distance != dist[u]:
+            continue
+
+        ur, uc = from_index(u)
+        owner_u = board.assignments[u]
+        for dr, dc in DIRS:
+            vr, vc = ur + dr, uc + dc
+            if not in_bounds((vr, vc)):
+                continue
+            v = index((vr, vc))
+            owner_v = board.assignments[v]
+            weight = min(sizes[owner_u], sizes[owner_v])
+            candidate_distance = current_distance + weight
+            if candidate_distance < dist[v]:
+                dist[v] = candidate_distance
+                heapq.heappush(heap, (candidate_distance, v))
+
+    for cell, target in CLUES.items():
+        actual = dist[index(cell)]
+        if actual != target:
+            return False, (
+                f"{label(cell)} has distance {actual}, expected {target}"
+            )
+
+    return True, "all puzzle rules and clue distances match"
