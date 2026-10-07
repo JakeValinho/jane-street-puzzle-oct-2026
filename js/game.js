@@ -31,6 +31,7 @@
   var showDistances = document.getElementById('showDistances');
   var capitolModeBtn = document.getElementById('capitolMode');
   var solverStepBtn = document.getElementById('solverStep');
+  var propagateKnowledgeBtn = document.getElementById('propagateKnowledge');
   var pruneStateBtn = document.getElementById('pruneState');
   var lookAheadBtn = document.getElementById('lookAhead');
   var solverOutput = document.getElementById('solverOutput');
@@ -602,6 +603,111 @@
     }
   }
 
+  async function propagateCertainFacts() {
+    propagateKnowledgeBtn.disabled = true;
+    solverOutput.textContent = 'Building the fixed-point knowledge base...';
+    try {
+      var payload = snapshot();
+      payload.time_budget = 6;
+      payload.max_rounds = 12;
+      payload.deep = true;
+
+      var response = await fetch('/api/knowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Knowledge request failed');
+
+      solverFocus = new Set();
+      (result.actions || []).forEach(function (action) {
+        if (action.cell) solverFocus.add(idx(action.cell[0] - 1, action.cell[1] - 1));
+        (action.cells || []).forEach(function (cell) {
+          solverFocus.add(idx(cell[0] - 1, cell[1] - 1));
+        });
+      });
+
+      solverOutput.innerHTML = '';
+
+      var title = document.createElement('div');
+      title.className = 'solver-title';
+      title.textContent = result.contradiction
+        ? 'Knowledge base found a contradiction'
+        : 'Fixed-point knowledge propagation';
+      solverOutput.appendChild(title);
+
+      var summaryText = document.createElement('div');
+      if (result.contradiction) {
+        summaryText.textContent = result.contradiction;
+      } else {
+        summaryText.textContent =
+          (result.fixed_point ? 'Reached a fixed point. ' : 'Stopped before a full fixed point. ') +
+          (result.actions || []).length + ' forced update(s), ' +
+          (result.facts || []).length + ' stored fact(s), ' +
+          result.rounds + ' propagation round(s).' +
+          (result.timed_out ? ' The time budget expired before every domain could be rechecked.' : '');
+      }
+      solverOutput.appendChild(summaryText);
+
+      if (result.actions && result.actions.length) {
+        var actionBox = document.createElement('div');
+        actionBox.className = 'solver-options';
+        actionBox.innerHTML = '<b>Certain updates</b><br>' + result.actions.slice(0, 20).map(function (action) {
+          return '• ' + action.text;
+        }).join('<br>');
+        if (result.actions.length > 20) {
+          actionBox.innerHTML += '<br>… ' + (result.actions.length - 20) + ' more';
+        }
+        solverOutput.appendChild(actionBox);
+      }
+
+      if (result.facts && result.facts.length) {
+        var factBox = document.createElement('div');
+        factBox.className = 'solver-options';
+        factBox.innerHTML = '<b>Stored constraints / near-forced domains</b><br>' + result.facts.slice(0, 16).map(function (fact) {
+          return '• ' + fact.text;
+        }).join('<br>');
+        if (result.facts.length > 16) {
+          factBox.innerHTML += '<br>… ' + (result.facts.length - 16) + ' more';
+        }
+        solverOutput.appendChild(factBox);
+      }
+
+      if (result.states) {
+        var stateLines = Object.keys(result.states).sort(function (a, b) { return Number(a) - Number(b); }).map(function (key) {
+          var state = result.states[key];
+          var cap = state.capitol ? ' · capitol r' + state.capitol[0] + 'c' + state.capitol[1] : '';
+          var shapes = state.candidate_count_exact
+            ? ' · exact candidates ' + state.candidate_shapes.length
+            : '';
+          return 'State ' + key +
+            ': certain ' + state.certain_cells.length +
+            ' · size ' + state.min_size + '–' + state.max_size +
+            cap + shapes;
+        });
+        if (stateLines.length) {
+          var statesBox = document.createElement('div');
+          statesBox.className = 'solver-options';
+          statesBox.innerHTML = '<b>Internal state knowledge</b><br>' + stateLines.join('<br>');
+          solverOutput.appendChild(statesBox);
+        }
+      }
+
+      var meta = document.createElement('div');
+      meta.className = 'solver-meta';
+      meta.textContent = 'Only proved consequences are stored. Unresolved branches are not committed to the board.';
+      solverOutput.appendChild(meta);
+      render();
+    } catch (err) {
+      solverFocus = new Set();
+      solverOutput.textContent = 'Could not propagate the knowledge base. Make sure python app.py is running.\n\n' + err.message;
+      render();
+    } finally {
+      propagateKnowledgeBtn.disabled = false;
+    }
+  }
+
   async function pruneActiveState() {
     if (activeRegion == null) {
       solverOutput.textContent = 'Select a state first.';
@@ -748,6 +854,7 @@
   document.getElementById('newState').addEventListener('click', addRegion);
   document.getElementById('check').addEventListener('click', validateAndCheck);
   solverStepBtn.addEventListener('click', pythonNextStep);
+  propagateKnowledgeBtn.addEventListener('click', propagateCertainFacts);
   pruneStateBtn.addEventListener('click', pruneActiveState);
   lookAheadBtn.addEventListener('click', recursiveLookAhead);
   capitolModeBtn.addEventListener('click', function () { setCapitolMode(!capitolMode); });
