@@ -203,6 +203,15 @@ class CandidateModel:
         if not self.required:
             self.reason = "The state has no selected cells."
 
+        self.plausible_symmetries = []
+        if not self.reason:
+            self.plausible_symmetries = [
+                sym for sym in all_symmetries()
+                if self._symmetry_precheck(sym)
+            ]
+            if not self.plausible_symmetries:
+                self.reason = "No rotation or reflection can extend the currently selected cells."
+
     def _derive_forced_capitol(self):
         marked = self.board.marked_capitol_cell(self.state_id)
         zeros = [cell for cell in self.required if CLUES.get(cell) == 0]
@@ -307,10 +316,7 @@ class CandidateModel:
             model.Add(rem == 1)
 
         selectors = []
-        for s_idx, sym in enumerate(all_symmetries()):
-            if not self._symmetry_precheck(sym):
-                continue
-
+        for s_idx, sym in enumerate(self.plausible_symmetries):
             y = model.NewBoolVar(f"sym_{s_idx}")
             selectors.append(y)
 
@@ -344,7 +350,6 @@ class CandidateModel:
                                 model.Add(x[zi] + x[j] <= 1).OnlyEnforceIf(y)
 
         if not selectors:
-            self.reason = "No rotation or reflection can extend the currently selected cells."
             return None
         model.Add(sum(selectors) >= 1)
 
