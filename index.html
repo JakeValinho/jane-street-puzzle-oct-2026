@@ -17,6 +17,7 @@
       <button id="undo">Undo</button>
       <button id="redo">Redo</button>
       <button id="check">Check clues (C)</button>
+      <button id="solverStep" class="primary">Python next step</button>
       <button id="capitolMode">Mark capitol (M)</button>
       <button id="exportBtn">Export</button>
       <button id="importBtn">Import</button>
@@ -48,6 +49,12 @@
       <h2>States</h2>
       <div id="stateList" class="state-list"></div>
       <div class="tiny" id="activeInfo" style="margin-top:8px"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Python solver</h2>
+      <div class="legend" style="margin-bottom:8px">When the app is running through <span class="kbd">python app.py</span>, this sends the board exactly as it is now to the Python deduction engine. Repeated clicks cycle through the strongest currently available deductions, ranked roughly from forced moves to the smallest choice sets.</div>
+      <div id="solverOutput" class="message">Run the local Python server, then click <b>Python next step</b>.</div>
     </section>
 
     <section class="panel">
