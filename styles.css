@@ -183,3 +183,20 @@ label.toggle { display: flex; align-items: center; gap: 7px; font-size: 13px; }
   font-size: 12px;
   line-height: 1.4;
 }
+
+
+.cell.search-preview {
+  outline: 3px dashed #7b61ff;
+  outline-offset: -4px;
+  opacity: 0.72;
+}
+.cell.search-preview::after {
+  content: "search";
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  opacity: 0.75;
+}
