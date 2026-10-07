@@ -1,6 +1,6 @@
 from math import ceil
 
-from .puzzle import CLUES, neighbors
+from .puzzle import CLUES, N, neighbors
 
 
 def derive_cell_min_sizes():
@@ -58,7 +58,6 @@ def singleton_capitol_candidates(board, clue_cell):
     return candidates
 
 
-
 def is_locked_singleton_capitol(board, cell):
     """
     True only when the knowledge base has proved that this state can contain
@@ -74,12 +73,8 @@ def is_locked_singleton_capitol(board, cell):
         return False
 
     forbidden = board.forbidden_by_state.get(state_id, set())
-    return len(forbidden) >= board_size_minus_one()
+    return len(forbidden) >= N * N - 1
 
-
-def board_size_minus_one():
-    from .puzzle import N
-    return N * N - 1
 
 def forced_singleton_capitols(board):
     forced = set()
