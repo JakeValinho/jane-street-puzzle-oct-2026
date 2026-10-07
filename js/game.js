@@ -61,12 +61,79 @@
     };
   }
 
+  function normalizeSnapshot(s) {
+    if (!s || !Array.isArray(s.assignments) || s.assignments.length !== N * N) {
+      throw new Error('Progress data must contain exactly ' + (N * N) + ' board cells.');
+    }
+
+    var cleanAssignments = s.assignments.map(function (value) {
+      if (value == null) return null;
+      var id = Number(value);
+      if (!Number.isInteger(id) || id <= 0) throw new Error('State IDs must be positive integers.');
+      return id;
+    });
+
+    var active = s.activeRegion == null ? null : Number(s.activeRegion);
+    if (active != null && (!Number.isInteger(active) || active <= 0)) {
+      throw new Error('Active state ID is invalid.');
+    }
+
+    var regionMap = new Map();
+    (Array.isArray(s.regions) ? s.regions : []).forEach(function (region) {
+      var id = Number(region && region.id);
+      if (!Number.isInteger(id) || id <= 0) return;
+      regionMap.set(id, {
+        id: id,
+        color: typeof region.color === 'string' && region.color ? region.color : colorFor(id)
+      });
+    });
+
+    cleanAssignments.forEach(function (id) {
+      if (id != null && !regionMap.has(id)) {
+        regionMap.set(id, { id: id, color: colorFor(id) });
+      }
+    });
+    if (active != null && !regionMap.has(active)) {
+      regionMap.set(active, { id: active, color: colorFor(active) });
+    }
+
+    var cleanCapitols = {};
+    Object.keys(s.manualCapitols || {}).forEach(function (rawId) {
+      var id = Number(rawId);
+      var cellIndex = Number(s.manualCapitols[rawId]);
+      if (!Number.isInteger(id) || id <= 0) throw new Error('Capitol state ID is invalid.');
+      if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= N * N) {
+        throw new Error('Capitol cell is outside the board.');
+      }
+      if (cleanAssignments[cellIndex] !== id) {
+        throw new Error('A marked capitol must belong to its state.');
+      }
+      cleanCapitols[id] = cellIndex;
+    });
+
+    var ids = Array.from(regionMap.keys());
+    var maxId = ids.length ? Math.max.apply(null, ids) : 0;
+    var requestedNext = Number(s.nextId);
+    var cleanNext = Number.isInteger(requestedNext) && requestedNext > maxId
+      ? requestedNext
+      : maxId + 1;
+
+    return {
+      assignments: cleanAssignments,
+      regions: Array.from(regionMap.values()).sort(function (a, b) { return a.id - b.id; }),
+      activeRegion: active,
+      nextId: Math.max(1, cleanNext),
+      manualCapitols: cleanCapitols
+    };
+  }
+
   function restore(s) {
-    assignments = s.assignments.slice();
-    regions = (s.regions || []).map(function (r) { return { id: r.id, color: r.color }; });
-    activeRegion = s.activeRegion == null ? null : s.activeRegion;
-    nextId = s.nextId || 1;
-    manualCapitols = Object.assign({}, s.manualCapitols || {});
+    var clean = normalizeSnapshot(s);
+    assignments = clean.assignments.slice();
+    regions = clean.regions.map(function (r) { return { id: r.id, color: r.color }; });
+    activeRegion = clean.activeRegion;
+    nextId = clean.nextId;
+    manualCapitols = Object.assign({}, clean.manualCapitols);
     invalidate();
     render();
     save();
@@ -907,15 +974,16 @@
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      var s = JSON.parse(raw);
-      if (Array.isArray(s.assignments) && s.assignments.length === N * N) {
-        assignments = s.assignments;
-        regions = s.regions || [];
-        activeRegion = s.activeRegion == null ? null : s.activeRegion;
-        nextId = s.nextId || 1;
-        manualCapitols = Object.assign({}, s.manualCapitols || {});
-      }
-    } catch (err) {}
+      var clean = normalizeSnapshot(JSON.parse(raw));
+      assignments = clean.assignments;
+      regions = clean.regions;
+      activeRegion = clean.activeRegion;
+      nextId = clean.nextId;
+      manualCapitols = clean.manualCapitols;
+    } catch (err) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (ignore) {}
+      summary.textContent = 'Saved progress was invalid and has been ignored: ' + err.message;
+    }
   }
 
   document.getElementById('exportBtn').addEventListener('click', function () {
@@ -932,7 +1000,7 @@
     if (!raw) return;
     try {
       var s = JSON.parse(raw);
-      if (!Array.isArray(s.assignments) || s.assignments.length !== N * N) throw new Error('Bad board size');
+      normalizeSnapshot(s);
       pushUndo();
       restore(s);
       summary.textContent = 'Progress imported.';
