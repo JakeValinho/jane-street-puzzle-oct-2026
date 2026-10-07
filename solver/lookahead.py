@@ -697,20 +697,15 @@ def solve_logically(
         forced_branch = None
         forced_depth = None
 
-        # Do not confuse "the first small branch was unresolved" with "there
-        # is no logical move". Human solvers scan several constrained areas.
-        # We do the same, testing a bounded number of the best branches.
-        for branch in branches_to_try[:8]:
-            if not budget.available():
+        # Breadth-first iterative deepening: scan all promising areas at depth
+        # 1 before spending the budget taking any one area to depth 2 or 3.
+        # This matches how a human solver looks for an easy contradiction
+        # somewhere else instead of tunnelling into the first unresolved clue.
+        for depth in range(1, max_depth + 1):
+            if not budget.available() or forced_option is not None:
                 break
 
-            final_children = None
-            used_depth = None
-            branch_forced = None
-
-            # Iterative deepening keeps the reasoning human-readable: try the
-            # cheapest contradiction proof first, then look farther only if needed.
-            for depth in range(1, max_depth + 1):
+            for branch in branches_to_try[:8]:
                 if not budget.available():
                     break
 
@@ -740,25 +735,22 @@ def solve_logically(
                     if result["status"] != "contradiction"
                 ]
 
-                final_children = children
-                used_depth = depth
-
+                branch_forced = None
                 if len(survivors) == 1 and len(contradicted) == len(children) - 1:
                     branch_forced = survivors[0][0]
+
+                public_branch = _public_branch(branch, children)
+                branch_history.append({
+                    "branch": public_branch,
+                    "depth": depth,
+                    "forced": None if branch_forced is None else _public_option(branch_forced),
+                })
+
+                if branch_forced is not None:
+                    forced_option = branch_forced
+                    forced_branch = branch
+                    forced_depth = depth
                     break
-
-            public_branch = _public_branch(branch, final_children)
-            branch_history.append({
-                "branch": public_branch,
-                "depth": used_depth,
-                "forced": None if branch_forced is None else _public_option(branch_forced),
-            })
-
-            if branch_forced is not None:
-                forced_option = branch_forced
-                forced_branch = branch
-                forced_depth = used_depth
-                break
 
         if forced_option is None:
             stopped_reason = "unresolved-branches"
