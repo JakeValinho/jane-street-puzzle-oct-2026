@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Callable
 import heapq
+import time
 from collections import defaultdict
 
 from ortools.sat.python import cp_model
@@ -191,7 +192,8 @@ class CandidateModel:
     def __init__(self, board: BoardState, state_id: int, time_limit=2.0):
         self.board = board
         self.state_id = state_id
-        self.time_limit = time_limit
+        self.time_limit = max(0.01, float(time_limit))
+        self.deadline = time.monotonic() + self.time_limit
         self.required = set(board.state_cells.get(state_id, []))
         self.reason = ""
         self.other_assigned = {
@@ -224,6 +226,18 @@ class CandidateModel:
             ]
             if not self.plausible_symmetries:
                 self.reason = "No rotation or reflection can extend the currently selected cells."
+
+    def _remaining_time(self):
+        return max(0.0, self.deadline - time.monotonic())
+
+    def _new_solver(self):
+        remaining = self._remaining_time()
+        if remaining <= 0:
+            return None
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = max(0.01, remaining)
+        solver.parameters.num_search_workers = 8
+        return solver
 
     def _derive_forced_capitol(self):
         marked = self.board.marked_capitol_cell(self.state_id)
@@ -557,13 +571,18 @@ class CandidateModel:
             return None, bool(self.reason)
 
         model, x, size = built
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = self.time_limit
-        solver.parameters.num_search_workers = 8
+        solver = self._new_solver()
+        if solver is None:
+            return None, False
 
         exact = True
         rejected = 0
         while rejected < 250:
+            if self._remaining_time() <= 0:
+                return None, False
+            solver = self._new_solver()
+            if solver is None:
+                return None, False
             self.solver_calls += 1
             status = solver.Solve(model)
             if status == cp_model.INFEASIBLE:
@@ -613,9 +632,9 @@ class CandidateModel:
         complete = False
 
         while rejected < 600 and len(found) <= limit:
-            solver = cp_model.CpSolver()
-            solver.parameters.max_time_in_seconds = self.time_limit
-            solver.parameters.num_search_workers = 8
+            solver = self._new_solver()
+            if solver is None:
+                break
             self.solver_calls += 1
             status = solver.Solve(model)
 
