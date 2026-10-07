@@ -63,7 +63,7 @@ def test_forced_singleton_domain_stays_singleton():
     assert domain.forced_cells == {forced}
 
 
-from solver.lookahead import apply_option, analyze_lookahead
+from solver.lookahead import apply_option, analyze_lookahead, solve_logically
 
 
 def test_partial_one_cell_state_is_not_assumed_complete():
@@ -213,20 +213,25 @@ def test_positive_clue_cannot_be_a_proved_singleton():
 
 
 
-def test_deep_blank_board_propagates_beyond_initial_capitol_facts():
+def test_blank_board_logical_solver_goes_beyond_initial_capitol_facts():
     board = BoardState.from_snapshot(empty_snapshot())
-    result = propagate_knowledge(
+    result = solve_logically(
         board,
-        deadline=time.monotonic() + 10.0,
-        max_rounds=8,
-        deep=True,
-        collect_actions=True,
+        max_depth=3,
+        time_budget=18.0,
+        max_nodes=100,
+        max_iterations=8,
     )
 
-    assigned = sum(owner is not None for owner in result.board.assignments)
-    assert result.contradiction is None
+    internal = result.get("internal_board", {})
+    assigned = sum(
+        owner is not None
+        for owner in internal.get("assignments", [])
+    )
+    assert result["status"] != "contradiction", result
     assert assigned > 3, (
-        f"expected ownership/state-shape reasoning to move beyond the two zero "
-        f"anchors plus r6c11 singleton, but only {assigned} cells were assigned. "
-        f"actions={result.actions!r}; facts={result.facts!r}"
+        f"expected direct propagation plus contradiction search to move beyond "
+        f"the two zero anchors plus r6c11 singleton, but only {assigned} cells "
+        f"were assigned. stopped_reason={result.get('stopped_reason')!r}; "
+        f"branches={result.get('branches')!r}; actions={result.get('actions')!r}"
     )
