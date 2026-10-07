@@ -160,3 +160,63 @@ The default UI search uses depth 2, an 8-second wall-clock budget, and at most 2
 The candidate engine also exposes a natural binary branch cell whenever it proves that both “in this state” and “not in this state” still have legal completions. This is used by the minimum-remaining-values heuristic after direct clue branches.
 
 A one-cell state drawn by the user is now treated as a **partial** state, not automatically as a completed singleton. It becomes a true singleton only when the puzzle rules force that conclusion.
+
+
+## Fixed-point knowledge model
+
+The solver now separates **knowledge** from the visible painted board. The central implementation is `solver/knowledge.py`.
+
+A partially known state can exist internally with only a capitol or a few certain cells. For example, a clue `0` creates an anchored state whose capitol is certain even though the rest of the shape is unknown.
+
+For every known state the engine tracks:
+
+- cells that certainly belong to it
+- cells that certainly do not belong to it
+- a certain capitol, when known
+- proven minimum and maximum state size
+- odd-size parity when a capitol is known
+- the number of symmetry placements still compatible with the certain information
+- explicit complete candidate shapes when the remaining domain is small enough to enumerate exactly
+
+For every cell the engine tracks:
+
+- whether its state is already forced
+- whether it must be a capitol
+- its clue-derived minimum state size
+- known states it cannot belong to
+- known states that have not yet been ruled out
+- whether it may still belong to a not-yet-created state
+
+### Propagation loop
+
+**Propagate certain facts** runs the following loop until it reaches a fixed point or the interactive time budget expires:
+
+1. anchor every clue-0 capitol
+2. resolve any clue-1 with only one singleton-capitol candidate
+3. update state-size and parity constraints
+4. prune each state's implicit connected/symmetric candidate domain
+5. prove candidate intersections (cells in every legal completion)
+6. prove exclusions (cells in no legal completion)
+7. when a small candidate domain is completely enumerated, intersect and union those full shapes
+8. if exactly one complete state shape remains, mark that shape as forced internally
+9. repeat because every new inclusion or exclusion can trigger another deduction
+
+This process never commits an unresolved choice. It operates on a clone of the current browser board and returns proved facts.
+
+### Near-forced outcomes and search
+
+Once fixed-point propagation stalls, recursive search uses **minimum remaining values**. The preferred branch is the smallest currently exhaustive domain:
+
+1. a clue-1 singleton choice
+2. a state with exactly 2 or 3 complete candidate shapes
+3. a two-way cell-membership question for a constrained state
+
+Each option is assumed only on a hypothetical copy. The entire fixed-point knowledge engine is then run again. An option is eliminated only if that hypothetical branch reaches a proved contradiction. If all but one option are eliminated, the survivor is reported as **forced by contradiction**.
+
+The real browser board is never changed by an unproved guess.
+
+### API
+
+`POST /api/knowledge` returns the current fixed-point knowledge base, including internal state knowledge, cell knowledge, certain updates, stored constraints, and contradiction status.
+
+`POST /api/lookahead` uses that same knowledge engine recursively for hypothetical reasoning.
