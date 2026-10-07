@@ -60,6 +60,19 @@ class BoardState:
                     raise ValueError("forbidden cells must be indices or [row, col] pairs")
             forbidden[sid] = cells
 
+        for sid, ci in caps.items():
+            if normalized[ci] != sid:
+                raise ValueError(
+                    f"State {sid}'s marked capitol must be a cell already assigned to that state"
+                )
+
+        for sid, cells in forbidden.items():
+            for cell in cells:
+                if normalized[index(cell)] == sid:
+                    raise ValueError(
+                        f"State {sid} cannot both contain and forbid cell {cell}"
+                    )
+
         return cls(
             assignments=normalized,
             manual_capitols=caps,
