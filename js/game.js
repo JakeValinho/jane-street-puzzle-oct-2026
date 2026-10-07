@@ -32,6 +32,7 @@
   var capitolModeBtn = document.getElementById('capitolMode');
   var solverStepBtn = document.getElementById('solverStep');
   var pruneStateBtn = document.getElementById('pruneState');
+  var lookAheadBtn = document.getElementById('lookAhead');
   var solverOutput = document.getElementById('solverOutput');
   var solverFocus = new Set();
   var solverDeductions = [];
@@ -525,6 +526,9 @@
     if (choice.type === 'add_cells') return 'add to State ' + choice.state + ': ' + choice.cells.map(function (cell) { return 'r' + cell[0] + 'c' + cell[1]; }).join(', ');
     if (choice.type === 'state_size_exact') return 'State ' + choice.state + ' final size = ' + choice.size;
     if (choice.type === 'state_size_range') return 'State ' + choice.state + ' final size ' + choice.minimum + '–' + choice.maximum;
+    if (choice.type === 'state_cell_membership') {
+      return 'r' + choice.cell[0] + 'c' + choice.cell[1] + (choice.value ? ' IS' : ' is NOT') + ' in State ' + choice.state;
+    }
     return JSON.stringify(choice);
   }
 
@@ -649,10 +653,103 @@
     }
   }
 
+  function lookaheadOptionText(option) {
+    if (!option) return '';
+    if (option.description) return option.description;
+    return formatSolverChoice(option);
+  }
+
+  async function recursiveLookAhead() {
+    lookAheadBtn.disabled = true;
+    solverOutput.textContent = 'Testing the most constrained branches recursively...';
+    try {
+      var payload = snapshot();
+      payload.depth = 2;
+      payload.time_budget = 8;
+      payload.max_nodes = 28;
+
+      var response = await fetch('/api/lookahead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Look-ahead request failed');
+
+      solverFocus = new Set();
+      (result.cells || []).forEach(function (cell) {
+        solverFocus.add(idx(cell[0] - 1, cell[1] - 1));
+      });
+
+      solverOutput.innerHTML = '';
+
+      var title = document.createElement('div');
+      title.className = 'solver-title';
+      title.textContent = result.title || 'Recursive look-ahead';
+      solverOutput.appendChild(title);
+
+      var explanation = document.createElement('div');
+      explanation.textContent = result.explanation || '';
+      solverOutput.appendChild(explanation);
+
+      if (result.actions && result.actions.length) {
+        var actionBox = document.createElement('div');
+        actionBox.className = 'solver-options';
+        actionBox.innerHTML = result.actions.map(function (action) {
+          return '• ' + action.text;
+        }).join('<br>');
+        solverOutput.appendChild(actionBox);
+      }
+
+      if (result.forced_option) {
+        var forced = document.createElement('div');
+        forced.className = 'solver-options status-good';
+        forced.textContent = 'FORCED: ' + lookaheadOptionText(result.forced_option);
+        solverOutput.appendChild(forced);
+      }
+
+      if (result.eliminated_options && result.eliminated_options.length) {
+        var eliminated = document.createElement('div');
+        eliminated.className = 'solver-options status-bad';
+        eliminated.textContent = 'Eliminated: ' + result.eliminated_options.map(lookaheadOptionText).join(' | ');
+        solverOutput.appendChild(eliminated);
+      }
+
+      if (result.surviving_options && result.surviving_options.length) {
+        var surviving = document.createElement('div');
+        surviving.className = 'solver-options';
+        surviving.textContent = 'Still possible: ' + result.surviving_options.map(lookaheadOptionText).join(' | ');
+        solverOutput.appendChild(surviving);
+      }
+
+      if (result.branch && result.branch.results) {
+        var details = document.createElement('div');
+        details.className = 'solver-options';
+        details.innerHTML = '<b>' + result.branch.title + '</b><br>' + result.branch.results.map(function (item) {
+          return lookaheadOptionText(item.option) + ' → ' + item.status + (item.reason ? ': ' + item.reason : '');
+        }).join('<br>');
+        solverOutput.appendChild(details);
+      }
+
+      var meta = document.createElement('div');
+      meta.className = 'solver-meta';
+      meta.textContent = 'recursive depth ' + (result.depth || 2) + ' · search nodes ' + (result.nodes || 0) + ' · status: ' + result.status;
+      solverOutput.appendChild(meta);
+      render();
+    } catch (err) {
+      solverFocus = new Set();
+      solverOutput.textContent = 'Could not run recursive look-ahead. Make sure python app.py is running.\n\n' + err.message;
+      render();
+    } finally {
+      lookAheadBtn.disabled = false;
+    }
+  }
+
   document.getElementById('newState').addEventListener('click', addRegion);
   document.getElementById('check').addEventListener('click', validateAndCheck);
   solverStepBtn.addEventListener('click', pythonNextStep);
   pruneStateBtn.addEventListener('click', pruneActiveState);
+  lookAheadBtn.addEventListener('click', recursiveLookAhead);
   capitolModeBtn.addEventListener('click', function () { setCapitolMode(!capitolMode); });
   document.getElementById('undo').addEventListener('click', function () {
     if (!undoStack.length) return;
