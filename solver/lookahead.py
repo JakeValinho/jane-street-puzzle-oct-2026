@@ -267,24 +267,30 @@ def _membership_branches(board: BoardState, budget: SearchBudget):
     return branches
 
 
-def choose_branch(board: BoardState, knowledge, budget: SearchBudget):
+def candidate_branches(board: BoardState, knowledge, budget: SearchBudget):
     branches = []
     branches.extend(_singleton_branches(board))
     branches.extend(_shape_branches(knowledge))
     branches.extend(_owner_branches(knowledge))
-    branches.extend(_membership_branches(board, budget))
-    if not branches:
-        return None
 
-    # Minimum Remaining Values. Direct clue branches win ties, then complete
-    # state-shape domains, exhaustive cell-owner domains, and finally generic
-    # binary membership hypotheses.
+    # Generic membership probing invokes CP-SAT and is much more expensive.
+    # Only ask for those branches when the cheap logical domains above do not
+    # already give us a useful menu of cases to test.
+    if len(branches) < 4 and budget.available():
+        branches.extend(_membership_branches(board, budget))
+
     branches.sort(key=lambda branch: (
         len(branch["options"]),
         branch["priority"],
+        -branch.get("information", 0),
         branch["title"],
     ))
-    return branches[0]
+    return branches
+
+
+def choose_branch(board: BoardState, knowledge, budget: SearchBudget):
+    branches = candidate_branches(board, knowledge, budget)
+    return branches[0] if branches else None
 
 
 def apply_option(board: BoardState, option):
@@ -681,63 +687,80 @@ def solve_logically(
             stopped_reason = "budget"
             break
 
-        branch = choose_branch(current, knowledge, budget)
-        if branch is None:
+        branches_to_try = candidate_branches(current, knowledge, budget)
+        if not branches_to_try:
             stopped_reason = "no-branch"
             break
 
         forced_option = None
-        final_children = None
-        used_depth = None
+        forced_branch = None
+        forced_depth = None
 
-        # Iterative deepening keeps the reasoning human-readable: try the
-        # cheapest contradiction proof first, then look farther only if needed.
-        for depth in range(1, max_depth + 1):
+        # Do not confuse "the first small branch was unresolved" with "there
+        # is no logical move". Human solvers scan several constrained areas.
+        # We do the same, testing a bounded number of the best branches.
+        for branch in branches_to_try[:8]:
             if not budget.available():
                 break
 
-            children = []
-            for option in branch["options"]:
+            final_children = None
+            used_depth = None
+            branch_forced = None
+
+            # Iterative deepening keeps the reasoning human-readable: try the
+            # cheapest contradiction proof first, then look farther only if needed.
+            for depth in range(1, max_depth + 1):
                 if not budget.available():
                     break
-                try:
-                    child = apply_option(current, option)
-                except SearchContradiction as exc:
-                    result = {"status": "contradiction", "reason": str(exc)}
-                else:
-                    result = _prove_contradiction(child, depth - 1, budget)
-                children.append((option, result))
 
-            if len(children) != len(branch["options"]):
+                children = []
+                for option in branch["options"]:
+                    if not budget.available():
+                        break
+                    try:
+                        child = apply_option(current, option)
+                    except SearchContradiction as exc:
+                        result = {"status": "contradiction", "reason": str(exc)}
+                    else:
+                        result = _prove_contradiction(child, depth - 1, budget)
+                    children.append((option, result))
+
+                if len(children) != len(branch["options"]):
+                    break
+
+                contradicted = [
+                    (option, result)
+                    for option, result in children
+                    if result["status"] == "contradiction"
+                ]
+                survivors = [
+                    (option, result)
+                    for option, result in children
+                    if result["status"] != "contradiction"
+                ]
+
+                final_children = children
+                used_depth = depth
+
+                if len(survivors) == 1 and len(contradicted) == len(children) - 1:
+                    branch_forced = survivors[0][0]
+                    break
+
+            public_branch = _public_branch(branch, final_children)
+            branch_history.append({
+                "branch": public_branch,
+                "depth": used_depth,
+                "forced": None if branch_forced is None else _public_option(branch_forced),
+            })
+
+            if branch_forced is not None:
+                forced_option = branch_forced
+                forced_branch = branch
+                forced_depth = used_depth
                 break
-
-            contradicted = [
-                (option, result)
-                for option, result in children
-                if result["status"] == "contradiction"
-            ]
-            survivors = [
-                (option, result)
-                for option, result in children
-                if result["status"] != "contradiction"
-            ]
-
-            final_children = children
-            used_depth = depth
-
-            if len(survivors) == 1 and len(contradicted) == len(children) - 1:
-                forced_option = survivors[0][0]
-                break
-
-        public_branch = _public_branch(branch, final_children)
-        branch_history.append({
-            "branch": public_branch,
-            "depth": used_depth,
-            "forced": None if forced_option is None else _public_option(forced_option),
-        })
 
         if forced_option is None:
-            stopped_reason = "unresolved-branch"
+            stopped_reason = "unresolved-branches"
             break
 
         try:
@@ -758,10 +781,10 @@ def solve_logically(
             "type": "forced-by-contradiction",
             "text": (
                 f"{public_forced['description']} is forced: every alternative "
-                f"was proved contradictory at look-ahead depth {used_depth}."
+                f"was proved contradictory at look-ahead depth {forced_depth}."
             ),
             "description": public_forced["description"],
-            "depth": used_depth,
+            "depth": forced_depth,
         }
         if "state" in public_forced:
             action["state"] = public_forced["state"]
