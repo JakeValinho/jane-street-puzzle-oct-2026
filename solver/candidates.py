@@ -498,6 +498,14 @@ class CandidateModel:
             temp_assignments[index(cell)] = self.state_id
         temp = BoardState(temp_assignments, dict(self.board.manual_capitols))
 
+        # A completion of this state may not wall off another already-started
+        # state so that its selected cells can no longer be joined.
+        for other_state_id in temp.state_cells:
+            if other_state_id == self.state_id:
+                continue
+            if not temp.state_can_still_connect(other_state_id):
+                return False
+
         for clue_cell, value in CLUES.items():
             if value == 1 and not singleton_capitol_candidates(temp, clue_cell):
                 return False
