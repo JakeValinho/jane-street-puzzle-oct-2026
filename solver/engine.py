@@ -310,7 +310,6 @@ def rule_marked_capitol_parity(board: BoardState):
 BASE_RULES = [
     rule_contradictions,
     rule_zero_clues,
-    rule_existing_singletons,
     rule_one_clues,
     rule_distance_size_bounds,
     rule_marked_capitol_parity,
@@ -375,6 +374,33 @@ def rule_candidate_domains(board: BoardState):
                     "cells": [[r + 1, c + 1] for r, c in newly_forced],
                 }],
                 rank=8,
+            ))
+
+        if domain.branch_cell is not None:
+            br, bc = domain.branch_cell
+            out.append(Deduction(
+                rule="candidate-membership",
+                title=f"Does {label(domain.branch_cell)} belong to State {state_id}?",
+                explanation=(
+                    "Both possibilities still have at least one legal connected symmetric completion. "
+                    "This is a natural two-way branch for hypothetical look-ahead."
+                ),
+                cells=cells + [domain.branch_cell],
+                choices=[
+                    {
+                        "type": "state_cell_membership",
+                        "state": state_id,
+                        "cell": [br + 1, bc + 1],
+                        "value": True,
+                    },
+                    {
+                        "type": "state_cell_membership",
+                        "state": state_id,
+                        "cell": [br + 1, bc + 1],
+                        "value": False,
+                    },
+                ],
+                rank=34,
             ))
 
         if domain.min_size is not None and domain.max_size is not None:
