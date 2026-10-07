@@ -173,6 +173,21 @@ def find_basic_contradiction(board: BoardState):
         if not board.state_can_still_connect(state_id):
             return f"State {state_id} can no longer be connected through its own or still-available squares."
 
+        available = 0
+        for i, owner in enumerate(board.assignments):
+            cell = from_index(i)
+            if owner == state_id:
+                available += 1
+            elif owner is None and not board.is_forbidden(state_id, cell):
+                available += 1
+
+        minimum = _state_min_size(board, state_id)
+        if available < minimum:
+            return (
+                f"State {state_id} needs at least {minimum} squares, but only "
+                f"{available} cells remain available to it."
+            )
+
     zero_owner = {}
     for cell, value in CLUES.items():
         if value != 0:
