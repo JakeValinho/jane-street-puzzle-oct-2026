@@ -239,3 +239,24 @@ def test_blank_board_logical_solver_exposes_real_branch_point_without_guessing()
         "once direct propagation stalls, the solver should expose and test "
         "actual exhaustive branches rather than silently pretending no logic exists"
     )
+
+
+
+from solver.search import search_for_solution
+
+
+def test_speculative_search_can_move_past_forced_only_stall():
+    board = BoardState.from_snapshot(empty_snapshot())
+    result = search_for_solution(
+        board,
+        time_budget=3.0,
+        max_nodes=150,
+    )
+
+    assert result["status"] in {"partial", "solution"}
+    assert result["assigned_cells"] > 3, (
+        "branch-and-backtrack search should be able to explore beyond the "
+        "three initially forced cells even when proof-only propagation stalls"
+    )
+    if result["status"] == "partial":
+        assert result["path"], "partial search progress should identify its hypotheses"
