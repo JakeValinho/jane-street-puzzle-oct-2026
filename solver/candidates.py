@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Callable
 import heapq
@@ -34,7 +34,11 @@ class DomainResult:
     min_size: int | None
     max_size: int | None
     solver_calls: int
+    excluded_cells: set[tuple[int, int]] = field(default_factory=set)
     branch_cell: tuple[int, int] | None = None
+    candidate_shapes: list[set[tuple[int, int]]] = field(default_factory=list)
+    candidate_count_exact: bool = False
+    possible_symmetry_count: int | None = None
 
     def to_dict(self):
         def cells(xs):
@@ -47,10 +51,14 @@ class DomainResult:
             "reason": self.reason,
             "witness": None if self.witness is None else cells(self.witness),
             "forced_cells": cells(self.forced_cells),
+            "excluded_cells": cells(self.excluded_cells),
             "min_size": self.min_size,
             "max_size": self.max_size,
             "solver_calls": self.solver_calls,
             "branch_cell": None if self.branch_cell is None else [self.branch_cell[0] + 1, self.branch_cell[1] + 1],
+            "candidate_shapes": [cells(shape) for shape in self.candidate_shapes],
+            "candidate_count_exact": self.candidate_count_exact,
+            "possible_symmetry_count": self.possible_symmetry_count,
         }
 
 
@@ -569,42 +577,129 @@ class CandidateModel:
         return None, False
 
 
+
+    def enumerate_legal(self, limit=4):
+        """
+        Enumerate a small exact prefix of legal complete shapes for this state.
+
+        Returns (shapes, complete). complete=True means the solver proved there
+        are no additional legal shapes beyond those returned.
+        """
+        built = self._build_model()
+        if built is None:
+            return [], bool(self.reason)
+
+        model, x, _size = built
+        found = []
+        rejected = 0
+        complete = False
+
+        while rejected < 600 and len(found) <= limit:
+            solver = cp_model.CpSolver()
+            solver.parameters.max_time_in_seconds = self.time_limit
+            solver.parameters.num_search_workers = 8
+            self.solver_calls += 1
+            status = solver.Solve(model)
+
+            if status in (cp_model.INFEASIBLE, cp_model.MODEL_INVALID):
+                complete = True
+                break
+            if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                break
+
+            selected_i = [i for i in range(N * N) if solver.Value(x[i])]
+            selected_set = set(selected_i)
+            cells = {from_index(i) for i in selected_i}
+
+            # Always block the raw shape before testing it so rejected shapes
+            # cannot recur because of a different flow/symmetry assignment.
+            diff_terms = [
+                1 - x[i] if i in selected_set else x[i]
+                for i in range(N * N)
+            ]
+            model.Add(sum(diff_terms) >= 1)
+
+            if self._candidate_is_globally_legal(cells):
+                found.append(cells)
+                if len(found) > limit:
+                    return found[:limit], False
+            else:
+                rejected += 1
+
+        return found[:limit], complete and len(found) <= limit
+
+
 def analyze_state_domain(
     board: BoardState,
     state_id: int,
     time_limit=1.0,
     max_forced_checks=None,
+    max_exclusion_checks=0,
     compute_bounds=True,
+    enumerate_limit=0,
 ):
     """
-    Analyze all legal completions of a currently drawn state implicitly.
+    Analyze the legal completion domain of a partially known state.
 
-    We do not enumerate every polyomino. CP-SAT represents the entire legal
-    family and answers existence questions. A cell is reported as forced only
-    when the solver proves there is no legal completion excluding it.
+    The CP-SAT model is implicit. A square becomes forced only after the
+    solver proves there is no legal completion excluding it. A square becomes
+    excluded only after the solver proves there is no legal completion
+    including it. Optional small-domain enumeration is exact only when the
+    solver reaches infeasibility after listing all candidates.
     """
     cm = CandidateModel(board, state_id, time_limit=time_limit)
+    symmetry_count = len(cm.plausible_symmetries)
+
     if cm.reason:
-        return DomainResult(state_id, True, False, cm.reason, None, set(), None, None, cm.solver_calls, None)
+        return DomainResult(
+            state_id=state_id,
+            exact=True,
+            feasible=False,
+            reason=cm.reason,
+            witness=None,
+            forced_cells=set(),
+            min_size=None,
+            max_size=None,
+            solver_calls=cm.solver_calls,
+            possible_symmetry_count=symmetry_count,
+        )
 
     witness, exact = cm.find()
     if witness is None:
         reason = cm.reason or "No connected symmetric completion satisfies the currently encoded puzzle rules."
-        return DomainResult(state_id, exact, False, reason, None, set(), None, None, cm.solver_calls, None)
+        return DomainResult(
+            state_id=state_id,
+            exact=exact,
+            feasible=False,
+            reason=reason,
+            witness=None,
+            forced_cells=set(),
+            min_size=None,
+            max_size=None,
+            solver_calls=cm.solver_calls,
+            possible_symmetry_count=symmetry_count,
+        )
 
     required = set(cm.required)
     forced = set(required)
+    excluded = set(cm.forbidden) | set(cm.other_assigned)
     all_exact = exact
 
-    # Only witness cells can possibly be forced. Prove each extra one by
-    # asking whether any legal completion exists without it. The first cell
-    # for which both include and exclude completions exist becomes a natural
-    # two-way human-style branch.
+    # Only witness cells can possibly be forced. Prioritize cells adjacent to
+    # already-certain cells, then cells carrying strong clue-derived bounds.
     branch_candidates = []
     extras = sorted(
         witness - required,
         key=lambda cell: (
-            0 if any(n in required for n in ((cell[0] + 1, cell[1]), (cell[0] - 1, cell[1]), (cell[0], cell[1] + 1), (cell[0], cell[1] - 1))) else 1,
+            0 if any(
+                n in required
+                for n in (
+                    (cell[0] + 1, cell[1]),
+                    (cell[0] - 1, cell[1]),
+                    (cell[0], cell[1] + 1),
+                    (cell[0], cell[1] - 1),
+                )
+            ) else 1,
             -CELL_MIN_SIZES.get(cell, 1),
             cell,
         ),
@@ -620,12 +715,54 @@ def analyze_state_domain(
         elif alternate is not None:
             branch_candidates.append(cell)
 
+    # Prove exclusions by asking whether a legal completion can include a
+    # currently unassigned square. We prioritize the frontier around the
+    # certain core because those exclusions propagate connectivity fastest.
+    if max_exclusion_checks:
+        candidate_cells = []
+        seen = set()
+        frontier = set()
+        for r, col in required | forced:
+            for dr, dc in DIRS:
+                cell = (r + dr, col + dc)
+                if in_bounds(cell):
+                    frontier.add(cell)
+
+        ordered = list(sorted(frontier))
+        ordered += [
+            cell for cell in sorted(CELL_MIN_SIZES, key=lambda x: -CELL_MIN_SIZES[x])
+            if cell not in frontier
+        ]
+        ordered += [
+            from_index(i) for i in range(N * N)
+            if from_index(i) not in frontier and from_index(i) not in CELL_MIN_SIZES
+        ]
+
+        for cell in ordered:
+            if len(candidate_cells) >= max_exclusion_checks:
+                break
+            if cell in seen or cell in required or cell in excluded:
+                continue
+            seen.add(cell)
+            candidate_cells.append(cell)
+
+        for cell in candidate_cells:
+            possible, proof_exact = cm.find(force_include=cell)
+            all_exact = all_exact and proof_exact
+            if possible is None and proof_exact:
+                excluded.add(cell)
+
     min_candidate = max_candidate = None
     min_exact = max_exact = True
     if compute_bounds:
         min_candidate, min_exact = cm.find(objective="min")
         max_candidate, max_exact = cm.find(objective="max")
         all_exact = all_exact and min_exact and max_exact
+
+    candidate_shapes = []
+    candidate_count_exact = False
+    if enumerate_limit:
+        candidate_shapes, candidate_count_exact = cm.enumerate_legal(limit=enumerate_limit)
 
     return DomainResult(
         state_id=state_id,
@@ -634,8 +771,13 @@ def analyze_state_domain(
         reason="Legal connected symmetric completions exist.",
         witness=witness,
         forced_cells=forced,
+        excluded_cells=excluded,
         min_size=None if min_candidate is None or not min_exact else len(min_candidate),
         max_size=None if max_candidate is None or not max_exact else len(max_candidate),
         solver_calls=cm.solver_calls,
         branch_cell=branch_candidates[0] if branch_candidates else None,
+        candidate_shapes=candidate_shapes,
+        candidate_count_exact=candidate_count_exact,
+        possible_symmetry_count=symmetry_count,
     )
+
