@@ -2,6 +2,7 @@ from pathlib import Path
 import time
 
 from flask import Flask, jsonify, request, send_from_directory
+from werkzeug.exceptions import BadRequest
 
 from solver.engine import analyze_snapshot
 from solver.model import BoardState
@@ -11,6 +12,16 @@ from solver.knowledge import propagate_knowledge
 
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=None)
+
+
+def _json_payload():
+    try:
+        payload = _json_payload()
+    except BadRequest as exc:
+        raise ValueError("Request body must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Request JSON must be an object")
+    return payload
 
 
 @app.get("/")
@@ -26,7 +37,7 @@ def static_files(path):
 @app.post("/api/analyze")
 def analyze_api():
     try:
-        payload = request.get_json(force=True)
+        payload = _json_payload()
         return jsonify(analyze_snapshot(payload))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -38,7 +49,7 @@ def analyze_api():
 @app.post("/api/knowledge")
 def knowledge_api():
     try:
-        payload = request.get_json(force=True)
+        payload = _json_payload()
         board = BoardState.from_snapshot(payload)
         time_budget = float(payload.get("time_budget", 5.0))
         max_rounds = max(1, min(int(payload.get("max_rounds", 12)), 50))
@@ -64,7 +75,7 @@ def knowledge_api():
 @app.post("/api/lookahead")
 def lookahead_api():
     try:
-        payload = request.get_json(force=True)
+        payload = _json_payload()
         board = BoardState.from_snapshot(payload)
         depth = int(payload.get("depth", 2))
         time_budget = float(payload.get("time_budget", 8.0))
@@ -87,7 +98,7 @@ def lookahead_api():
 @app.post("/api/domain")
 def domain_api():
     try:
-        payload = request.get_json(force=True)
+        payload = _json_payload()
         state_id = payload.get("state_id", payload.get("activeRegion"))
         if state_id is None:
             raise ValueError("Select a state first.")
