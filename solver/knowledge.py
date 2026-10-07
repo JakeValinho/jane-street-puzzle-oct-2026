@@ -440,6 +440,7 @@ def propagate_knowledge(
     deep=True,
     collect_actions=True,
     probe_ownership=True,
+    analyze_domains=True,
 ):
     """
     Reach a fixed point using only proved consequences.
@@ -599,136 +600,138 @@ def propagate_knowledge(
                     "text": f"State {state_id} must eventually have at least {minimum} squares.",
                 })
 
-        # 4) Prune the implicit candidate-shape domain of each known state.
         round_domains = {}
-        for state_id, state_cells in list(work.state_cells.items()):
-            if not _deadline_available(deadline):
-                timed_out = True
-                break
+        if analyze_domains:
+            # 4) Prune the implicit candidate-shape domain of each known state.
+            for state_id, state_cells in list(work.state_cells.items()):
+                if not _deadline_available(deadline):
+                    timed_out = True
+                    break
 
-            domain = _domain_for_state(work, state_id, deadline, deep)
-            if domain is None:
-                continue
-            round_domains[state_id] = domain
-
-            if not domain.feasible:
-                if domain.exact:
-                    states, cells = build_knowledge(work, round_domains)
-                    return KnowledgeResult(
-                        work, states, cells, actions, facts,
-                        f"State {state_id} has no legal connected symmetric completion.",
-                        rounds, False, timed_out,
-                    )
-                continue
-
-            if domain.min_size is not None or domain.max_size is not None:
-                add_fact({
-                    "type": "state-size-range",
-                    "state": state_id,
-                    "minimum": domain.min_size,
-                    "maximum": domain.max_size,
-                    "text": (
-                        f"State {state_id} has proven size bounds "
-                        f"{domain.min_size if domain.min_size is not None else '?'} to "
-                        f"{domain.max_size if domain.max_size is not None else '?'}."
-                    ),
-                })
-
-            if domain.possible_symmetry_count is not None:
-                add_fact({
-                    "type": "symmetry-domain",
-                    "state": state_id,
-                    "count": domain.possible_symmetry_count,
-                    "text": f"State {state_id} has {domain.possible_symmetry_count} symmetry placements still compatible with its certain cells.",
-                })
-
-            certain_before = set(work.state_cells.get(state_id, []))
-            for cell in sorted(domain.forced_cells - certain_before):
-                try:
-                    work.assign(state_id, cell)
-                except ValueError as exc:
-                    states, cells = build_knowledge(work, round_domains)
-                    return KnowledgeResult(
-                        work, states, cells, actions, facts, str(exc),
-                        rounds, False, timed_out,
-                    )
-                changed = True
-                add_action({
-                    "type": "add_cell",
-                    "state": state_id,
-                    "cell": _cell_json(cell),
-                    "text": f"{label(cell)} occurs in every legal completion of State {state_id}.",
-                })
-
-            for cell in sorted(domain.excluded_cells):
-                if work.state_at(cell) is not None:
+                domain = _domain_for_state(work, state_id, deadline, deep)
+                if domain is None:
                     continue
-                if work.is_forbidden(state_id, cell):
-                    continue
-                work.forbid(state_id, cell)
-                changed = True
-                add_action({
-                    "type": "exclude_cell",
-                    "state": state_id,
-                    "cell": _cell_json(cell),
-                    "text": f"{label(cell)} cannot belong to State {state_id}; no legal completion includes it.",
-                })
+                round_domains[state_id] = domain
 
-            if domain.candidate_count_exact:
-                count = len(domain.candidate_shapes)
-                add_fact({
-                    "type": "candidate-shape-count",
-                    "state": state_id,
-                    "count": count,
-                    "text": f"State {state_id} has exactly {count} legal complete shape candidate(s).",
-                })
-
-                # Candidate intersection/union in explicit small domains.
-                if domain.candidate_shapes:
-                    intersection = set.intersection(*map(set, domain.candidate_shapes))
-                    union = set.union(*map(set, domain.candidate_shapes))
-                    for cell in sorted(intersection - set(work.state_cells.get(state_id, []))):
-                        work.assign(state_id, cell)
-                        changed = True
-                        add_action({
-                            "type": "candidate-intersection",
-                            "state": state_id,
-                            "cell": _cell_json(cell),
-                            "text": f"{label(cell)} is in the intersection of every remaining complete shape for State {state_id}.",
-                        })
-
-                    for i in range(N * N):
-                        cell = from_index(i)
-                        if cell in union or work.state_at(cell) is not None or work.is_forbidden(state_id, cell):
-                            continue
-                        work.forbid(state_id, cell)
-                        changed = True
-                        add_action({
-                            "type": "candidate-union-exclusion",
-                            "state": state_id,
-                            "cell": _cell_json(cell),
-                            "text": f"{label(cell)} lies outside the union of every remaining complete shape for State {state_id}.",
-                        })
-
-                if count == 1:
-                    try:
-                        added, excluded = _apply_exact_shape(
-                            work, state_id, domain.candidate_shapes[0]
+                if not domain.feasible:
+                    if domain.exact:
+                        states, cells = build_knowledge(work, round_domains)
+                        return KnowledgeResult(
+                            work, states, cells, actions, facts,
+                            f"State {state_id} has no legal connected symmetric completion.",
+                            rounds, False, timed_out,
                         )
+                    continue
+
+                if domain.min_size is not None or domain.max_size is not None:
+                    add_fact({
+                        "type": "state-size-range",
+                        "state": state_id,
+                        "minimum": domain.min_size,
+                        "maximum": domain.max_size,
+                        "text": (
+                            f"State {state_id} has proven size bounds "
+                            f"{domain.min_size if domain.min_size is not None else '?'} to "
+                            f"{domain.max_size if domain.max_size is not None else '?'}."
+                        ),
+                    })
+
+                if domain.possible_symmetry_count is not None:
+                    add_fact({
+                        "type": "symmetry-domain",
+                        "state": state_id,
+                        "count": domain.possible_symmetry_count,
+                        "text": f"State {state_id} has {domain.possible_symmetry_count} symmetry placements still compatible with its certain cells.",
+                    })
+
+                certain_before = set(work.state_cells.get(state_id, []))
+                for cell in sorted(domain.forced_cells - certain_before):
+                    try:
+                        work.assign(state_id, cell)
                     except ValueError as exc:
                         states, cells = build_knowledge(work, round_domains)
                         return KnowledgeResult(
                             work, states, cells, actions, facts, str(exc),
                             rounds, False, timed_out,
                         )
-                    if added or excluded:
-                        changed = True
-                        add_action({
-                            "type": "solve_state_shape",
-                            "state": state_id,
-                            "cells": [_cell_json(cell) for cell in sorted(domain.candidate_shapes[0])],
-                            "text": f"State {state_id} has exactly one legal complete shape.",
-                        })
+                    changed = True
+                    add_action({
+                        "type": "add_cell",
+                        "state": state_id,
+                        "cell": _cell_json(cell),
+                        "text": f"{label(cell)} occurs in every legal completion of State {state_id}.",
+                    })
+
+                for cell in sorted(domain.excluded_cells):
+                    if work.state_at(cell) is not None:
+                        continue
+                    if work.is_forbidden(state_id, cell):
+                        continue
+                    work.forbid(state_id, cell)
+                    changed = True
+                    add_action({
+                        "type": "exclude_cell",
+                        "state": state_id,
+                        "cell": _cell_json(cell),
+                        "text": f"{label(cell)} cannot belong to State {state_id}; no legal completion includes it.",
+                    })
+
+                if domain.candidate_count_exact:
+                    count = len(domain.candidate_shapes)
+                    add_fact({
+                        "type": "candidate-shape-count",
+                        "state": state_id,
+                        "count": count,
+                        "text": f"State {state_id} has exactly {count} legal complete shape candidate(s).",
+                    })
+
+                    # Candidate intersection/union in explicit small domains.
+                    if domain.candidate_shapes:
+                        intersection = set.intersection(*map(set, domain.candidate_shapes))
+                        union = set.union(*map(set, domain.candidate_shapes))
+                        for cell in sorted(intersection - set(work.state_cells.get(state_id, []))):
+                            work.assign(state_id, cell)
+                            changed = True
+                            add_action({
+                                "type": "candidate-intersection",
+                                "state": state_id,
+                                "cell": _cell_json(cell),
+                                "text": f"{label(cell)} is in the intersection of every remaining complete shape for State {state_id}.",
+                            })
+
+                        for i in range(N * N):
+                            cell = from_index(i)
+                            if cell in union or work.state_at(cell) is not None or work.is_forbidden(state_id, cell):
+                                continue
+                            work.forbid(state_id, cell)
+                            changed = True
+                            add_action({
+                                "type": "candidate-union-exclusion",
+                                "state": state_id,
+                                "cell": _cell_json(cell),
+                                "text": f"{label(cell)} lies outside the union of every remaining complete shape for State {state_id}.",
+                            })
+
+                    if count == 1:
+                        try:
+                            added, excluded = _apply_exact_shape(
+                                work, state_id, domain.candidate_shapes[0]
+                            )
+                        except ValueError as exc:
+                            states, cells = build_knowledge(work, round_domains)
+                            return KnowledgeResult(
+                                work, states, cells, actions, facts, str(exc),
+                                rounds, False, timed_out,
+                            )
+                        if added or excluded:
+                            changed = True
+                            add_action({
+                                "type": "solve_state_shape",
+                                "state": state_id,
+                                "cells": [_cell_json(cell) for cell in sorted(domain.candidate_shapes[0])],
+                                "text": f"State {state_id} has exactly one legal complete shape.",
+                            })
+
 
         if probe_ownership:
             # 5) Infer ownership of informative unassigned cells.
