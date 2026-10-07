@@ -42,7 +42,7 @@ def test_shape_capitol_examples_from_puzzle_statement():
     assert analyze_shape(one_by_three)["valid"]
     assert analyze_shape(one_by_three)["capitol"] is None
 
-    x_pentomino = {(5, 5), (4, 4), (4, 6), (6, 4), (6, 6)}
+    x_pentomino = {(5, 5), (4, 5), (6, 5), (5, 4), (5, 6)}
     assert analyze_shape(x_pentomino)["valid"]
     assert analyze_shape(x_pentomino)["capitol"] is None
 
