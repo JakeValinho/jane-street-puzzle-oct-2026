@@ -3,6 +3,8 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
 from solver.engine import analyze_snapshot
+from solver.model import BoardState
+from solver.candidates import analyze_state_domain
 
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=None)
@@ -23,6 +25,20 @@ def analyze_api():
     try:
         payload = request.get_json(force=True)
         return jsonify(analyze_snapshot(payload))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/domain")
+def domain_api():
+    try:
+        payload = request.get_json(force=True)
+        state_id = payload.get("state_id", payload.get("activeRegion"))
+        if state_id is None:
+            raise ValueError("Select a state first.")
+        board = BoardState.from_snapshot(payload)
+        domain = analyze_state_domain(board, int(state_id), time_limit=2.5)
+        return jsonify(domain.to_dict())
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
