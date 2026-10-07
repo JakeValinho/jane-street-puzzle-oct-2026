@@ -31,6 +31,7 @@
   var showDistances = document.getElementById('showDistances');
   var capitolModeBtn = document.getElementById('capitolMode');
   var solverStepBtn = document.getElementById('solverStep');
+  var pruneStateBtn = document.getElementById('pruneState');
   var solverOutput = document.getElementById('solverOutput');
   var solverFocus = new Set();
   var solverDeductions = [];
@@ -597,9 +598,61 @@
     }
   }
 
+  async function pruneActiveState() {
+    if (activeRegion == null) {
+      solverOutput.textContent = 'Select a state first.';
+      return;
+    }
+    pruneStateBtn.disabled = true;
+    solverOutput.textContent = 'Pruning every currently legal completion of State ' + activeRegion + '...';
+    try {
+      var payload = snapshot();
+      payload.state_id = activeRegion;
+      var response = await fetch('/api/domain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Domain request failed');
+
+      solverFocus = new Set();
+      (result.forced_cells || []).forEach(function (cell) {
+        solverFocus.add(idx(cell[0] - 1, cell[1] - 1));
+      });
+
+      if (!result.feasible) {
+        solverOutput.innerHTML =
+          '<div class="solver-title">State ' + activeRegion + ' has no legal completion</div>' +
+          '<div>' + result.reason + '</div>' +
+          '<div class="solver-meta">' + (result.exact ? 'Proved' : 'Search incomplete') + ' · solver calls: ' + result.solver_calls + '</div>';
+      } else {
+        var forcedText = (result.forced_cells || []).map(function (cell) {
+          return 'r' + cell[0] + 'c' + cell[1];
+        }).join(', ');
+        solverOutput.innerHTML =
+          '<div class="solver-title">State ' + activeRegion + ' candidate domain</div>' +
+          '<div>All returned possibilities satisfy the encoded connectivity, symmetry, capitol, ownership, singleton, and clue-size rules.</div>' +
+          '<div class="solver-options">Feasible size range: ' +
+            (result.min_size == null ? '?' : result.min_size) + '–' +
+            (result.max_size == null ? '?' : result.max_size) +
+            '<br>Squares proved to be in every legal completion: ' + (forcedText || 'none beyond the cells already selected') +
+          '</div>' +
+          '<div class="solver-meta">' + (result.exact ? 'Exact proofs for reported bounds' : 'Some bounds hit the time limit') +
+            ' · solver calls: ' + result.solver_calls + '</div>';
+      }
+      render();
+    } catch (err) {
+      solverOutput.textContent = 'Could not prune the active state. Make sure python app.py is running.\n\n' + err.message;
+    } finally {
+      pruneStateBtn.disabled = false;
+    }
+  }
+
   document.getElementById('newState').addEventListener('click', addRegion);
   document.getElementById('check').addEventListener('click', validateAndCheck);
   solverStepBtn.addEventListener('click', pythonNextStep);
+  pruneStateBtn.addEventListener('click', pruneActiveState);
   capitolModeBtn.addEventListener('click', function () { setCapitolMode(!capitolMode); });
   document.getElementById('undo').addEventListener('click', function () {
     if (!undoStack.length) return;
