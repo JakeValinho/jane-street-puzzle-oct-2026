@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import time
 
 from .candidates import analyze_state_domain
-from .constraints import singleton_capitol_candidates
+from .constraints import is_locked_singleton_capitol, singleton_capitol_candidates
 from .knowledge import propagate_knowledge
 from .model import BoardState
 from .puzzle import CLUES, N, from_index, index, label
@@ -92,6 +92,13 @@ def _singleton_branches(board: BoardState):
         if value != 1:
             continue
         candidates = singleton_capitol_candidates(board, clue_cell)
+
+        # Once any adjacent singleton is already proved, this clue is
+        # satisfied. Other adjacent cells may also become singleton capitols,
+        # but the clue no longer creates an exhaustive unresolved branch.
+        if any(is_locked_singleton_capitol(board, cell) for cell in candidates):
+            continue
+
         if len(candidates) < 2:
             continue
 
