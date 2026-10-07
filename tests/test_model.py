@@ -15,7 +15,7 @@ def empty_snapshot():
 
 
 def test_puzzle_clue_transcription_sanity():
-    assert len(CLUES) == 29
+    assert len(CLUES) == 33
     assert CLUES[(5, 7)] == 0   # r6c8
     assert CLUES[(10, 5)] == 0  # r11c6
     assert CLUES[(2, 5)] == 1   # r3c6
