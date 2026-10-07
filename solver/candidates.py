@@ -34,6 +34,7 @@ class DomainResult:
     min_size: int | None
     max_size: int | None
     solver_calls: int
+    branch_cell: tuple[int, int] | None = None
 
     def to_dict(self):
         def cells(xs):
@@ -49,6 +50,7 @@ class DomainResult:
             "min_size": self.min_size,
             "max_size": self.max_size,
             "solver_calls": self.solver_calls,
+            "branch_cell": None if self.branch_cell is None else [self.branch_cell[0] + 1, self.branch_cell[1] + 1],
         }
 
 
@@ -189,6 +191,7 @@ class CandidateModel:
             for i, owner in enumerate(board.assignments)
             if owner is not None and owner != state_id
         }
+        self.forbidden = set(board.forbidden_by_state.get(state_id, set()))
         self.forced_singletons = forced_singleton_capitols(board)
         self.forced_capitol = self._derive_forced_capitol()
         self.exact_singleton = None
@@ -243,7 +246,7 @@ class CandidateModel:
 
         # The orbit closure of every required cell must stay in the board
         # and cannot hit a square already committed to another state.
-        forbidden_i = {index(cell) for cell in self.other_assigned}
+        forbidden_i = {index(cell) for cell in self.other_assigned | self.forbidden}
         for cell in self.required:
             cur = index(cell)
             seen = set()
@@ -281,6 +284,8 @@ class CandidateModel:
             model.Add(x[index(cell)] == 1)
 
         for cell in self.other_assigned:
+            model.Add(x[index(cell)] == 0)
+        for cell in self.forbidden:
             model.Add(x[index(cell)] == 0)
 
         # A square forced by a clue-1 deduction to be a singleton capitol can
@@ -496,7 +501,14 @@ class CandidateModel:
         temp_assignments = self.board.assignments[:]
         for cell in cells:
             temp_assignments[index(cell)] = self.state_id
-        temp = BoardState(temp_assignments, dict(self.board.manual_capitols))
+        temp = BoardState(
+            temp_assignments,
+            dict(self.board.manual_capitols),
+            {
+                state_id: set(cells)
+                for state_id, cells in self.board.forbidden_by_state.items()
+            },
+        )
 
         # A completion of this state may not wall off another already-started
         # state so that its selected cells can no longer be joined.
@@ -557,7 +569,13 @@ class CandidateModel:
         return None, False
 
 
-def analyze_state_domain(board: BoardState, state_id: int, time_limit=1.0):
+def analyze_state_domain(
+    board: BoardState,
+    state_id: int,
+    time_limit=1.0,
+    max_forced_checks=None,
+    compute_bounds=True,
+):
     """
     Analyze all legal completions of a currently drawn state implicitly.
 
@@ -567,28 +585,47 @@ def analyze_state_domain(board: BoardState, state_id: int, time_limit=1.0):
     """
     cm = CandidateModel(board, state_id, time_limit=time_limit)
     if cm.reason:
-        return DomainResult(state_id, True, False, cm.reason, None, set(), None, None, cm.solver_calls)
+        return DomainResult(state_id, True, False, cm.reason, None, set(), None, None, cm.solver_calls, None)
 
     witness, exact = cm.find()
     if witness is None:
         reason = cm.reason or "No connected symmetric completion satisfies the currently encoded puzzle rules."
-        return DomainResult(state_id, exact, False, reason, None, set(), None, None, cm.solver_calls)
+        return DomainResult(state_id, exact, False, reason, None, set(), None, None, cm.solver_calls, None)
 
     required = set(cm.required)
     forced = set(required)
     all_exact = exact
 
     # Only witness cells can possibly be forced. Prove each extra one by
-    # asking whether any legal completion exists without it.
-    for cell in sorted(witness - required):
+    # asking whether any legal completion exists without it. The first cell
+    # for which both include and exclude completions exist becomes a natural
+    # two-way human-style branch.
+    branch_candidates = []
+    extras = sorted(
+        witness - required,
+        key=lambda cell: (
+            0 if any(n in required for n in ((cell[0] + 1, cell[1]), (cell[0] - 1, cell[1]), (cell[0], cell[1] + 1), (cell[0], cell[1] - 1))) else 1,
+            -CELL_MIN_SIZES.get(cell, 1),
+            cell,
+        ),
+    )
+    if max_forced_checks is not None:
+        extras = extras[:max_forced_checks]
+
+    for cell in extras:
         alternate, proof_exact = cm.find(force_exclude=cell)
         all_exact = all_exact and proof_exact
         if alternate is None and proof_exact:
             forced.add(cell)
+        elif alternate is not None:
+            branch_candidates.append(cell)
 
-    min_candidate, min_exact = cm.find(objective="min")
-    max_candidate, max_exact = cm.find(objective="max")
-    all_exact = all_exact and min_exact and max_exact
+    min_candidate = max_candidate = None
+    min_exact = max_exact = True
+    if compute_bounds:
+        min_candidate, min_exact = cm.find(objective="min")
+        max_candidate, max_exact = cm.find(objective="max")
+        all_exact = all_exact and min_exact and max_exact
 
     return DomainResult(
         state_id=state_id,
@@ -600,4 +637,5 @@ def analyze_state_domain(board: BoardState, state_id: int, time_limit=1.0):
         min_size=None if min_candidate is None or not min_exact else len(min_candidate),
         max_size=None if max_candidate is None or not max_exact else len(max_candidate),
         solver_calls=cm.solver_calls,
+        branch_cell=branch_candidates[0] if branch_candidates else None,
     )
