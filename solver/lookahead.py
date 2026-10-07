@@ -382,6 +382,7 @@ def _propagate_for_search(board, budget, collect_actions=False, deep=False):
         max_rounds=10,
         deep=deep,
         collect_actions=collect_actions,
+        probe_ownership=False,
     )
     return result
 
@@ -658,6 +659,7 @@ def solve_logically(
             max_rounds=16,
             deep=True,
             collect_actions=True,
+            probe_ownership=False,
         )
         actions.extend(knowledge.actions)
         current = knowledge.board
@@ -777,6 +779,7 @@ def solve_logically(
         max_rounds=16,
         deep=True,
         collect_actions=True,
+        probe_ownership=False,
     )
     actions.extend(final_knowledge.actions)
     final_dict = final_knowledge.to_dict()
