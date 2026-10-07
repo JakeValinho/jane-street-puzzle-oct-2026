@@ -418,9 +418,22 @@ class CandidateModel:
             geom = analyze_shape(cells)
             if not geom["valid"]:
                 return False
+
+            # A user-marked capitol is a hard constraint. On a complete
+            # partition it must agree exactly with the capitol implied by
+            # every nontrivial symmetry of that state's final shape.
+            marked = self.board.marked_capitol_cell(owner)
+            if marked is not None and geom["capitol"] != marked:
+                return False
+
             sizes[owner] = len(cells)
             if geom["capitol"] is not None:
                 capitols.append(geom["capitol"])
+
+        # A marked capitol for a state that does not exist in the completed
+        # partition is malformed/inconsistent input.
+        if any(owner not in state_cells for owner in self.board.manual_capitols):
+            return False
 
         if not capitols:
             return False
