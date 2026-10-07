@@ -102,3 +102,72 @@ def test_blank_board_lookahead_starts_with_direct_propagation():
     action_types = {action["type"] for action in result["actions"]}
     assert "zero_capitol" in action_types
     assert "singleton_capitol" in action_types
+
+
+from solver.knowledge import propagate_knowledge
+
+
+def test_blank_board_knowledge_creates_capitol_anchors_without_mutating_input():
+    board = BoardState.from_snapshot(empty_snapshot())
+    original = board.assignments[:]
+
+    result = propagate_knowledge(
+        board,
+        deadline=None,
+        max_rounds=3,
+        deep=False,
+        collect_actions=True,
+    )
+
+    # Knowledge propagation works on a clone. The user's real board remains
+    # untouched until they choose to apply a proved deduction.
+    assert board.assignments == original
+    assert all(owner is None for owner in board.assignments)
+
+    by_capitol = {
+        state.capitol: state
+        for state in result.states.values()
+        if state.capitol is not None
+    }
+
+    # The two 0 clues become anchored states with a certain capitol but an
+    # otherwise incomplete shape.
+    assert (5, 7) in by_capitol   # r6c8
+    assert (10, 5) in by_capitol  # r11c6
+    assert (5, 7) in by_capitol[(5, 7)].certain_cells
+    assert (10, 5) in by_capitol[(10, 5)].certain_cells
+    assert by_capitol[(5, 7)].max_size > 1
+    assert by_capitol[(10, 5)].max_size > 1
+
+    # r6c11 is the forced singleton capitol from the clue 1 at r5c11.
+    singleton = by_capitol[(5, 10)]
+    assert singleton.certain_cells == {(5, 10)}
+    assert singleton.min_size == 1
+    assert singleton.max_size == 1
+
+
+def test_locked_singleton_has_exactly_one_enumerated_candidate_shape():
+    s = empty_snapshot()
+    cell = (5, 10)
+    s["assignments"][index(cell)] = 1
+    s["manualCapitols"] = {"1": index(cell)}
+    board = BoardState.from_snapshot(s)
+
+    for i in range(N * N):
+        other = divmod(i, N)
+        if other != cell:
+            board.forbid(1, other)
+
+    domain = analyze_state_domain(
+        board,
+        1,
+        time_limit=1.0,
+        max_forced_checks=3,
+        max_exclusion_checks=3,
+        compute_bounds=True,
+        enumerate_limit=3,
+    )
+
+    assert domain.feasible
+    assert domain.candidate_count_exact
+    assert domain.candidate_shapes == [{cell}]
