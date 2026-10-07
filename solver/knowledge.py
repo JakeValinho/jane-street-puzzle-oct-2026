@@ -427,6 +427,7 @@ def propagate_knowledge(
     max_rounds=12,
     deep=True,
     collect_actions=True,
+    probe_ownership=True,
 ):
     """
     Reach a fixed point using only proved consequences.
@@ -717,96 +718,156 @@ def propagate_knowledge(
                             "text": f"State {state_id} has exactly one legal complete shape.",
                         })
 
-        # 5) Infer ownership of informative unassigned cells.
-        #
-        # This is the key bridge the earlier solver was missing. A deduction
-        # such as "the state containing r3c4 has size >= 22" used to be stored
-        # but never acted on because r3c4 did not yet have a state ID. We now
-        # ask whether each known state can contain that cell and whether some
-        # genuinely new state can contain it. Proven impossibilities become
-        # exclusions; if only one owner remains, the cell is assigned.
-        for cell in _ownership_probe_cells(work, deep=deep):
-            if not _deadline_available(deadline):
-                timed_out = True
-                break
-            if work.state_at(cell) is not None:
-                continue
-
-            known_states = sorted(work.state_cells)
-            possible_existing = []
-            unresolved_existing = []
-
-            for state_id in known_states:
-                if work.is_forbidden(state_id, cell):
-                    continue
+        if probe_ownership:
+            # 5) Infer ownership of informative unassigned cells.
+            #
+            # This is the key bridge the earlier solver was missing. A deduction
+            # such as "the state containing r3c4 has size >= 22" used to be stored
+            # but never acted on because r3c4 did not yet have a state ID. We now
+            # ask whether each known state can contain that cell and whether some
+            # genuinely new state can contain it. Proven impossibilities become
+            # exclusions; if only one owner remains, the cell is assigned.
+            for cell in _ownership_probe_cells(work, deep=deep):
                 if not _deadline_available(deadline):
                     timed_out = True
                     break
+                if work.state_at(cell) is not None:
+                    continue
 
+                known_states = sorted(work.state_cells)
+                possible_existing = []
+                unresolved_existing = []
+
+                for state_id in known_states:
+                    if work.is_forbidden(state_id, cell):
+                        continue
+                    if not _deadline_available(deadline):
+                        timed_out = True
+                        break
+
+                    seconds = min(
+                        0.30 if deep else 0.14,
+                        max(0.03, _remaining(deadline, 0.14)),
+                    )
+                    possible, exact, _witness = probe_state_membership(
+                        work,
+                        state_id,
+                        cell,
+                        time_limit=seconds,
+                    )
+
+                    if possible:
+                        possible_existing.append(state_id)
+                    elif exact:
+                        work.forbid(state_id, cell)
+                        changed = True
+                        add_action({
+                            "type": "owner-exclusion",
+                            "state": state_id,
+                            "cell": _cell_json(cell),
+                            "text": (
+                                f"{label(cell)} cannot belong to State {state_id}; "
+                                "no legal connected symmetric completion can contain it."
+                            ),
+                        })
+                    else:
+                        unresolved_existing.append(state_id)
+
+                if timed_out or work.state_at(cell) is not None:
+                    continue
+
+                # Test the remaining logical possibility: the cell belongs to a
+                # state that has not been named yet.
                 seconds = min(
-                    0.30 if deep else 0.14,
-                    max(0.03, _remaining(deadline, 0.14)),
+                    0.34 if deep else 0.16,
+                    max(0.03, _remaining(deadline, 0.16)),
                 )
-                possible, exact, _witness = probe_state_membership(
+                fresh_possible, fresh_exact, _fresh_witness = probe_fresh_state(
                     work,
-                    state_id,
                     cell,
                     time_limit=seconds,
                 )
 
-                if possible:
-                    possible_existing.append(state_id)
-                elif exact:
-                    work.forbid(state_id, cell)
-                    changed = True
-                    add_action({
-                        "type": "owner-exclusion",
-                        "state": state_id,
+                if not fresh_possible and not fresh_exact:
+                    # Timeout: no proof either way.
+                    add_fact({
+                        "type": "owner-domain-incomplete",
                         "cell": _cell_json(cell),
+                        "count": len(possible_existing) + len(unresolved_existing),
                         "text": (
-                            f"{label(cell)} cannot belong to State {state_id}; "
-                            "no legal connected symmetric completion can contain it."
+                            f"Ownership search for {label(cell)} hit its time budget; "
+                            "no speculative conclusion was committed."
                         ),
                     })
-                else:
-                    unresolved_existing.append(state_id)
+                    continue
 
-            if timed_out or work.state_at(cell) is not None:
-                continue
+                if not fresh_possible and fresh_exact:
+                    # The cell cannot start a new state. If exactly one existing
+                    # state remains possible (and no state timed out), ownership is
+                    # genuinely forced.
+                    if not unresolved_existing and len(possible_existing) == 1:
+                        owner = possible_existing[0]
+                        try:
+                            work.assign(owner, cell)
+                        except ValueError as exc:
+                            states, cells = build_knowledge(work, round_domains)
+                            return KnowledgeResult(
+                                work, states, cells, actions, facts, str(exc),
+                                rounds, False, timed_out,
+                            )
+                        changed = True
+                        add_action({
+                            "type": "forced-owner",
+                            "state": owner,
+                            "cell": _cell_json(cell),
+                            "text": (
+                                f"{label(cell)} is forced into State {owner}: every "
+                                "other known state and every possible new state were eliminated."
+                            ),
+                        })
+                        continue
 
-            # Test the remaining logical possibility: the cell belongs to a
-            # state that has not been named yet.
-            seconds = min(
-                0.34 if deep else 0.16,
-                max(0.03, _remaining(deadline, 0.16)),
-            )
-            fresh_possible, fresh_exact, _fresh_witness = probe_fresh_state(
-                work,
-                cell,
-                time_limit=seconds,
-            )
+                    if not unresolved_existing and not possible_existing:
+                        states, cells = build_knowledge(work, round_domains)
+                        return KnowledgeResult(
+                            work,
+                            states,
+                            cells,
+                            actions,
+                            facts,
+                            (
+                                f"{label(cell)} has no possible owner: it cannot join "
+                                "any known state and cannot form any new legal state."
+                            ),
+                            rounds,
+                            False,
+                            timed_out,
+                        )
 
-            if not fresh_possible and not fresh_exact:
-                # Timeout: no proof either way.
-                add_fact({
-                    "type": "owner-domain-incomplete",
-                    "cell": _cell_json(cell),
-                    "count": len(possible_existing) + len(unresolved_existing),
-                    "text": (
-                        f"Ownership search for {label(cell)} hit its time budget; "
-                        "no speculative conclusion was committed."
-                    ),
-                })
-                continue
+                    add_fact({
+                        "type": "known-owner-domain",
+                        "cell": _cell_json(cell),
+                        "count": len(possible_existing) + len(unresolved_existing),
+                        "options": possible_existing + unresolved_existing,
+                        "text": (
+                            f"{label(cell)} cannot start a new state and must belong "
+                            f"to one of {len(possible_existing) + len(unresolved_existing)} known state(s)."
+                        ),
+                    })
+                    continue
 
-            if not fresh_possible and fresh_exact:
-                # The cell cannot start a new state. If exactly one existing
-                # state remains possible (and no state timed out), ownership is
-                # genuinely forced.
-                if not unresolved_existing and len(possible_existing) == 1:
-                    owner = possible_existing[0]
+                # A fresh state is possible. If every existing state has been
+                # PROVED impossible, the unnamed state containing this cell can be
+                # safely given a label now. This is only naming an already-existing
+                # mathematical state; it does not choose its shape.
+                if (
+                    fresh_possible
+                    and not possible_existing
+                    and not unresolved_existing
+                ):
+                    new_state = work.next_state_id()
                     try:
-                        work.assign(owner, cell)
+                        work.assign(new_state, cell)
                     except ValueError as exc:
                         states, cells = build_knowledge(work, round_domains)
                         return KnowledgeResult(
@@ -815,87 +876,28 @@ def propagate_knowledge(
                         )
                     changed = True
                     add_action({
-                        "type": "forced-owner",
-                        "state": owner,
+                        "type": "new-state-anchor",
+                        "state": new_state,
                         "cell": _cell_json(cell),
                         "text": (
-                            f"{label(cell)} is forced into State {owner}: every "
-                            "other known state and every possible new state were eliminated."
+                            f"{label(cell)} cannot belong to any existing state, so "
+                            f"the solver created State {new_state} as the symbolic name "
+                            "for the (still partly unknown) state containing it."
                         ),
                     })
                     continue
 
-                if not unresolved_existing and not possible_existing:
-                    states, cells = build_knowledge(work, round_domains)
-                    return KnowledgeResult(
-                        work,
-                        states,
-                        cells,
-                        actions,
-                        facts,
-                        (
-                            f"{label(cell)} has no possible owner: it cannot join "
-                            "any known state and cannot form any new legal state."
-                        ),
-                        rounds,
-                        False,
-                        timed_out,
-                    )
-
                 add_fact({
-                    "type": "known-owner-domain",
+                    "type": "owner-domain",
                     "cell": _cell_json(cell),
-                    "count": len(possible_existing) + len(unresolved_existing),
-                    "options": possible_existing + unresolved_existing,
+                    "count": len(possible_existing) + len(unresolved_existing) + 1,
+                    "options": possible_existing + unresolved_existing + ["new"],
                     "text": (
-                        f"{label(cell)} cannot start a new state and must belong "
-                        f"to one of {len(possible_existing) + len(unresolved_existing)} known state(s)."
+                        f"{label(cell)} can currently belong to "
+                        f"{len(possible_existing) + len(unresolved_existing)} known state(s) "
+                        "or to a not-yet-named state."
                     ),
                 })
-                continue
-
-            # A fresh state is possible. If every existing state has been
-            # PROVED impossible, the unnamed state containing this cell can be
-            # safely given a label now. This is only naming an already-existing
-            # mathematical state; it does not choose its shape.
-            if (
-                fresh_possible
-                and not possible_existing
-                and not unresolved_existing
-            ):
-                new_state = work.next_state_id()
-                try:
-                    work.assign(new_state, cell)
-                except ValueError as exc:
-                    states, cells = build_knowledge(work, round_domains)
-                    return KnowledgeResult(
-                        work, states, cells, actions, facts, str(exc),
-                        rounds, False, timed_out,
-                    )
-                changed = True
-                add_action({
-                    "type": "new-state-anchor",
-                    "state": new_state,
-                    "cell": _cell_json(cell),
-                    "text": (
-                        f"{label(cell)} cannot belong to any existing state, so "
-                        f"the solver created State {new_state} as the symbolic name "
-                        "for the (still partly unknown) state containing it."
-                    ),
-                })
-                continue
-
-            add_fact({
-                "type": "owner-domain",
-                "cell": _cell_json(cell),
-                "count": len(possible_existing) + len(unresolved_existing) + 1,
-                "options": possible_existing + unresolved_existing + ["new"],
-                "text": (
-                    f"{label(cell)} can currently belong to "
-                    f"{len(possible_existing) + len(unresolved_existing)} known state(s) "
-                    "or to a not-yet-named state."
-                ),
-            })
 
         if round_domains:
             last_domains = round_domains
