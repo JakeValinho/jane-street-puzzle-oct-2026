@@ -822,3 +822,54 @@ def analyze_state_domain(
         possible_symmetry_count=symmetry_count,
     )
 
+
+
+
+def probe_state_membership(board: BoardState, state_id: int, cell, time_limit=0.25):
+    """
+    Ask whether an existing known state can legally contain an unassigned cell.
+
+    Returns (possible, exact, witness). possible=False with exact=True is a
+    proof that the cell cannot belong to that state. A timeout or model error
+    returns exact=False and must never be used as an exclusion proof.
+    """
+    if board.state_at(cell) == state_id:
+        return True, True, set(board.state_cells.get(state_id, []))
+    if board.state_at(cell) is not None and board.state_at(cell) != state_id:
+        return False, True, None
+    if board.is_forbidden(state_id, cell):
+        return False, True, None
+
+    cm = CandidateModel(board, state_id, time_limit=time_limit)
+    if cm.reason:
+        return False, True, None
+
+    witness, exact = cm.find(force_include=cell)
+    return witness is not None, exact, witness
+
+
+def probe_fresh_state(board: BoardState, cell, time_limit=0.25):
+    """
+    Ask whether cell can be the first certain cell of some not-yet-named
+    state, distinct from every state already present on the board.
+
+    This bridges clue-derived facts about an unassigned cell into the state
+    shape solver. If all existing states are impossible but this probe
+    succeeds, naming a new state at this cell is a deduction, not a guess.
+    """
+    if board.state_at(cell) is not None:
+        return False, True, None
+
+    temp = board.clone()
+    state_id = temp.next_state_id()
+    try:
+        temp.assign(state_id, cell)
+    except ValueError:
+        return False, True, None
+
+    cm = CandidateModel(temp, state_id, time_limit=time_limit)
+    if cm.reason:
+        return False, True, None
+
+    witness, exact = cm.find()
+    return witness is not None, exact, witness
