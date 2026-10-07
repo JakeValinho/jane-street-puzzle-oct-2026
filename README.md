@@ -132,3 +132,31 @@ The model is **implicit**: it does not need to list millions of polyominoes. To 
 A timeout never creates a fake deduction. Size bounds are displayed only when CP-SAT proves the optimum, and cells are labelled forced only when infeasibility of the alternative is proved.
 
 The current layer is exact for the constraints above. A future global-search layer can go further by eliminating a locally legal state when it cannot coexist with any complete legal partition of the rest of the board.
+
+
+## Recursive hypothetical propagation
+
+The browser now has a **Recursive look-ahead** button backed by `solver/lookahead.py`.
+
+The search is deliberately human-style:
+
+1. propagate every currently forced consequence
+2. choose the unresolved branch with the fewest options
+3. temporarily assume one option
+4. propagate again under that hypothesis
+5. recurse to a limited depth
+6. if a branch reaches a proved contradiction, permanently eliminate that branch
+7. if every alternative except one is contradictory, report the survivor as forced
+
+The solver currently branches on two kinds of exhaustive choices:
+
+- which adjacent singleton capitol satisfies a clue `1`
+- whether a carefully chosen unresolved square belongs to a partially drawn state
+
+For state-membership branches, the negative hypothesis is stored internally as a per-state exclusion. That means the solver can reason about “r4c5 is **not** in State 3” without incorrectly assigning that square to some other state.
+
+The default UI search uses depth 2, an 8-second wall-clock budget, and at most 28 recursive nodes. These safeguards prevent a difficult branch from freezing the interactive solver. A timeout is reported as **unknown**, never as a contradiction.
+
+The candidate engine also exposes a natural binary branch cell whenever it proves that both “in this state” and “not in this state” still have legal completions. This is used by the minimum-remaining-values heuristic after direct clue branches.
+
+A one-cell state drawn by the user is now treated as a **partial** state, not automatically as a completed singleton. It becomes a true singleton only when the puzzle rules force that conclusion.
