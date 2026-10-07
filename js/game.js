@@ -17,6 +17,7 @@
   var redoStack = [];
   var dragging = false;
   var dragErase = false;
+  var dragEraseAnyState = false;
   var lastDistances = null;
   var clueStatus = {};
 
@@ -557,8 +558,13 @@
     }
 
     dragging = true;
-    dragErase = e.button === 2 || (e.button === 0 && assignments[i] === activeRegion);
-    if (dragErase) erase(i); else paint(i, activeRegion);
+    dragEraseAnyState = e.button === 2;
+    dragErase = dragEraseAnyState || (e.button === 0 && assignments[i] === activeRegion);
+    if (dragErase) {
+      if (dragEraseAnyState || assignments[i] === activeRegion) erase(i);
+    } else {
+      paint(i, activeRegion);
+    }
     render();
     save();
     if (cell.setPointerCapture) cell.setPointerCapture(e.pointerId);
@@ -570,7 +576,12 @@
     var cell = el && el.closest ? el.closest('.cell') : null;
     if (!cell) return;
     var i = Number(cell.dataset.i);
-    var changed = dragErase ? erase(i) : paint(i, activeRegion);
+    var changed;
+    if (dragErase) {
+      changed = dragEraseAnyState || assignments[i] === activeRegion ? erase(i) : false;
+    } else {
+      changed = paint(i, activeRegion);
+    }
     if (changed) { render(); save(); }
   });
 
