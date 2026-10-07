@@ -19,6 +19,7 @@
       <button id="check">Check clues (C)</button>
       <button id="solverStep" class="primary">Python next step</button>
       <button id="pruneState">Prune active state</button>
+      <button id="lookAhead">Recursive look-ahead</button>
       <button id="capitolMode">Mark capitol (M)</button>
       <button id="exportBtn">Export</button>
       <button id="importBtn">Import</button>
@@ -54,7 +55,7 @@
 
     <section class="panel">
       <h2>Python solver</h2>
-      <div class="legend" style="margin-bottom:8px">When the app is running through <span class="kbd">python app.py</span>, this sends the board exactly as it is now to the Python deduction engine. Repeated clicks cycle through the strongest currently available deductions, ranked roughly from forced moves to the smallest choice sets.</div>
+      <div class="legend" style="margin-bottom:8px">When the app is running through <span class="kbd">python app.py</span>, this sends the board exactly as it is now to the Python deduction engine. Repeated clicks cycle through the strongest currently available deductions, ranked roughly from forced moves to the smallest choice sets. <b>Recursive look-ahead</b> temporarily assumes the best few-choice branch, propagates all forced consequences, and rejects branches that lead to contradictions.</div>
       <div id="solverOutput" class="message">Run the local Python server, then click <b>Python next step</b>.</div>
     </section>
 
