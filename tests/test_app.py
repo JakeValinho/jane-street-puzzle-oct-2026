@@ -129,3 +129,22 @@ def test_javascript_referenced_controls_exist_in_html():
     for element_id in required_ids:
         assert f'id="{element_id}"' in html
         assert element_id in js
+
+
+
+def test_domain_api_smoke_for_known_singleton():
+    client = app.test_client()
+    payload = empty_snapshot()
+    cell_index = 5 * N + 10  # r6c11
+    payload["assignments"][cell_index] = 1
+    payload["manualCapitols"] = {"1": cell_index}
+    payload["state_id"] = 1
+
+    response = client.post("/api/domain", json=payload)
+
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result["state_id"] == 1
+    assert result["feasible"] is True
+    assert result["min_size"] is not None
+    assert result["max_size"] is not None
