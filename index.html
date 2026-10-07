@@ -22,6 +22,7 @@
       <button id="applyForced" class="primary">Apply forced facts</button>
       <button id="pruneState">Prune active state</button>
       <button id="lookAhead">Recursive look-ahead</button>
+      <button id="searchSolve">Search / backtrack</button>
       <button id="capitolMode">Mark capitol (M)</button>
       <button id="exportBtn">Export</button>
       <button id="importBtn">Import</button>
@@ -57,7 +58,7 @@
 
     <section class="panel">
       <h2>Python solver</h2>
-      <div class="legend" style="margin-bottom:8px">When the app is running through <span class="kbd">python app.py</span>, this sends the board exactly as it is now to the Python deduction engine. Repeated clicks cycle through the strongest currently available deductions, ranked roughly from forced moves to the smallest choice sets. <b>Propagate certain facts</b> builds an internal knowledge base of certain cells, exclusions, capitols, size bounds, and small candidate-shape domains until no more forced facts are found. <b>Apply forced facts</b> takes those proved conclusions and writes them onto the visible board, while retaining proved exclusions for the next solver pass. <b>Recursive look-ahead</b> temporarily assumes the best few-choice branch, propagates all forced consequences, and rejects branches that lead to contradictions.</div>
+      <div class="legend" style="margin-bottom:8px">When the app is running through <span class="kbd">python app.py</span>, this sends the board exactly as it is now to the Python deduction engine. Repeated clicks cycle through the strongest currently available deductions, ranked roughly from forced moves to the smallest choice sets. <b>Propagate certain facts</b> builds an internal knowledge base of certain cells, exclusions, capitols, size bounds, and small candidate-shape domains until no more forced facts are found. <b>Apply forced facts</b> takes those proved conclusions and writes them onto the visible board, while retaining proved exclusions for the next solver pass. <b>Recursive look-ahead</b> temporarily assumes the best few-choice branch, propagates all forced consequences, and rejects branches that lead to contradictions. <b>Search / backtrack</b> is allowed to explore genuinely non-forced hypotheses internally; partial search progress is shown as a speculative preview rather than being treated as certain.</div>
       <div id="solverOutput" class="message">Run the local Python server, then click <b>Python next step</b>.</div>
     </section>
 
