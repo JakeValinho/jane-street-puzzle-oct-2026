@@ -547,12 +547,15 @@
       return;
     }
 
+    // Capture the board before any automatic state creation so a single
+    // Undo truly returns to the exact pre-click position.
+    pushUndo();
+
     if (activeRegion == null && e.button !== 2) {
       activeRegion = nextId++;
       regions.push({ id: activeRegion, color: colorFor(activeRegion) });
     }
 
-    pushUndo();
     dragging = true;
     dragErase = e.button === 2 || (e.button === 0 && assignments[i] === activeRegion);
     if (dragErase) erase(i); else paint(i, activeRegion);
