@@ -7,7 +7,7 @@ from werkzeug.exceptions import BadRequest
 from solver.engine import analyze_snapshot
 from solver.model import BoardState
 from solver.candidates import analyze_state_domain
-from solver.lookahead import analyze_lookahead
+from solver.lookahead import analyze_lookahead, solve_logically
 from solver.knowledge import propagate_knowledge
 
 ROOT = Path(__file__).resolve().parent
@@ -65,6 +65,27 @@ def knowledge_api():
             collect_actions=True,
         )
         return jsonify(result.to_dict())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("Unexpected solver error")
+        return jsonify({"error": "Internal solver error: " + str(exc)}), 500
+
+
+@app.post("/api/solve-logically")
+def solve_logically_api():
+    try:
+        payload = _json_payload()
+        board = BoardState.from_snapshot(payload)
+        return jsonify(
+            solve_logically(
+                board,
+                max_depth=int(payload.get("max_depth", 3)),
+                time_budget=float(payload.get("time_budget", 20.0)),
+                max_nodes=int(payload.get("max_nodes", 120)),
+                max_iterations=int(payload.get("max_iterations", 20)),
+            )
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
