@@ -83,7 +83,7 @@ Repeated clicks cycle through the deductions available for the current board. As
 ### Rules currently implemented
 
 - clue `0` forces that exact square to be a capitol
-- an already drawn one-square state has its sole square as capitol
+- a one-cell state is treated as partial unless the rules actually prove it must remain a singleton
 - clue `1` must be adjacent to a singleton capitol; impossible neighboring candidates are eliminated
 - adjacent clue differences imply minimum state-size bounds
 - clues two moves apart imply a minimum size for every square adjacent to both clues
@@ -97,8 +97,8 @@ The engine is deliberately rule-based rather than a black-box brute-force solver
 ### Tests
 
 ```bash
-pip install pytest
-pytest -q
+pip install -r requirements.txt
+python -m pytest -q
 ```
 
 The initial tests verify the forced 0-clue capitols, the forced singleton at r6c11, and a basic contradiction involving the two 0 clues.
@@ -131,7 +131,7 @@ The model is **implicit**: it does not need to list millions of polyominoes. To 
 
 A timeout never creates a fake deduction. Size bounds are displayed only when CP-SAT proves the optimum, and cells are labelled forced only when infeasibility of the alternative is proved.
 
-The current layer is exact for the constraints above. A future global-search layer can go further by eliminating a locally legal state when it cannot coexist with any complete legal partition of the rest of the board.
+The candidate layer is exact for the constraints it proves. Recursive look-ahead now builds on top of it to eliminate locally legal possibilities when hypothetical propagation reaches a contradiction. Timeouts are never treated as proofs.
 
 
 ## Recursive hypothetical propagation
@@ -148,9 +148,10 @@ The search is deliberately human-style:
 6. if a branch reaches a proved contradiction, permanently eliminate that branch
 7. if every alternative except one is contradictory, report the survivor as forced
 
-The solver currently branches on two kinds of exhaustive choices:
+The solver currently branches on three kinds of exhaustive choices:
 
-- which adjacent singleton capitol satisfies a clue `1`
+- which adjacent singleton capitol satisfies a clue `1`, but only while that clue is not already satisfied by a proved singleton
+- which complete shape a state uses when exactly 2 or 3 legal shapes remain
 - whether a carefully chosen unresolved square belongs to a partially drawn state
 
 For state-membership branches, the negative hypothesis is stored internally as a per-state exclusion. That means the solver can reason about “r4c5 is **not** in State 3” without incorrectly assigning that square to some other state.
