@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import time
 
-from .candidates import analyze_state_domain
+from .candidates import analyze_shape, analyze_state_domain
 from .constraints import is_locked_singleton_capitol, singleton_capitol_candidates
 from .knowledge import propagate_knowledge
 from .model import BoardState
@@ -63,6 +63,20 @@ def _lock_singleton(board: BoardState, cell):
 
 def _lock_exact_shape(board: BoardState, state_id, shape):
     shape = set(shape)
+
+    geometry = analyze_shape(shape)
+    if not geometry["valid"]:
+        raise SearchContradiction(
+            f"The proposed complete shape for State {state_id} is not symmetric and connected."
+        )
+    inferred_capitol = geometry["capitol"]
+    existing_capitol = board.marked_capitol_cell(state_id)
+    if existing_capitol is not None and existing_capitol != inferred_capitol:
+        raise SearchContradiction(
+            f"The proposed complete shape for State {state_id} conflicts with its known capitol."
+        )
+    if inferred_capitol is not None:
+        board.manual_capitols[state_id] = index(inferred_capitol)
 
     for cell in shape:
         owner = board.state_at(cell)
