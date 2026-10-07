@@ -5,6 +5,8 @@ from math import ceil
 
 from .model import BoardState
 from .puzzle import CLUES, N, index, label, neighbors
+from .constraints import forced_singleton_capitols
+from .candidates import analyze_state_domain
 
 
 @dataclass
@@ -305,7 +307,7 @@ def rule_marked_capitol_parity(board: BoardState):
     return out
 
 
-RULES = [
+BASE_RULES = [
     rule_contradictions,
     rule_zero_clues,
     rule_existing_singletons,
@@ -315,11 +317,117 @@ RULES = [
 ]
 
 
+def rule_candidate_domains(board: BoardState):
+    """
+    Deep state-completion pruning.
+
+    CP-SAT implicitly represents every completion compatible with a chosen
+    state's already-painted cells. It enforces board boundaries, ownership,
+    orthogonal connectivity, at least one genuine rotation/reflection,
+    clue-derived size bounds, forced singleton capitols, clue-0 capitols,
+    manually marked capitols, and the puzzle's full capitol definition.
+    """
+    out = []
+    forced_singletons = forced_singleton_capitols(board)
+
+    for state_id, cells in board.state_cells.items():
+        # A single unconstrained painted square can have hundreds of symmetry
+        # axes/centres and is rarely the best human next step. Analyze it once
+        # it has structural information.
+        structurally_constrained = (
+            len(cells) >= 2
+            or board.marked_capitol_cell(state_id) is not None
+            or any(CLUES.get(cell) == 0 for cell in cells)
+            or any(cell in forced_singletons for cell in cells)
+        )
+        if not structurally_constrained:
+            continue
+
+        domain = analyze_state_domain(board, state_id, time_limit=0.8)
+
+        if not domain.feasible:
+            if domain.exact:
+                out.append(Deduction(
+                    rule="candidate-domain",
+                    title=f"State {state_id} has no legal completion",
+                    explanation=domain.reason + " Every remaining connected symmetric state shape has been eliminated by the encoded rules.",
+                    cells=cells,
+                    choices=[],
+                    category="contradiction",
+                    rank=0,
+                ))
+            continue
+
+        newly_forced = sorted(domain.forced_cells - set(cells))
+        if newly_forced:
+            out.append(Deduction(
+                rule="candidate-domain",
+                title=f"State {state_id} forces {len(newly_forced)} additional square" + ("" if len(newly_forced) == 1 else "s"),
+                explanation=(
+                    "The candidate solver tested the complete legal domain represented by the constraint model. "
+                    "No valid connected symmetric completion exists without these square(s)."
+                    + ("" if domain.exact else " The time-limited search did not prove every secondary bound, so treat only the listed forced cells as actionable.")
+                ),
+                cells=cells + newly_forced,
+                choices=[{
+                    "type": "add_cells",
+                    "state": state_id,
+                    "cells": [[r + 1, c + 1] for r, c in newly_forced],
+                }],
+                rank=8,
+            ))
+
+        if domain.min_size is not None and domain.max_size is not None:
+            current = len(cells)
+            if domain.exact and domain.min_size == domain.max_size and domain.min_size != current:
+                out.append(Deduction(
+                    rule="candidate-domain",
+                    title=f"State {state_id}'s final size is forced to {domain.min_size}",
+                    explanation="After discarding every illegal completion, the minimum and maximum feasible sizes are identical.",
+                    cells=cells,
+                    choices=[{
+                        "type": "state_size_exact",
+                        "state": state_id,
+                        "size": domain.min_size,
+                    }],
+                    rank=12,
+                ))
+            elif domain.max_size - domain.min_size <= 3:
+                out.append(Deduction(
+                    rule="candidate-domain",
+                    title=f"State {state_id} is tightly constrained to size {domain.min_size}–{domain.max_size}",
+                    explanation=(
+                        "All legal completions outside this range have been eliminated by connectivity, symmetry, capitol, ownership, and clue-derived constraints."
+                        + ("" if domain.exact else " The range is based on the best proven bounds before the solver time limit.")
+                    ),
+                    cells=cells,
+                    choices=[{
+                        "type": "state_size_range",
+                        "state": state_id,
+                        "minimum": domain.min_size,
+                        "maximum": domain.max_size,
+                    }],
+                    rank=22,
+                ))
+
+    return out
+
+
 def analyze(board: BoardState):
     deductions = []
     seen = set()
-    for rule in RULES:
+
+    for rule in BASE_RULES:
         for d in rule(board):
+            signature = (d.rule, d.title)
+            if signature not in seen:
+                seen.add(signature)
+                deductions.append(d)
+
+    # Do not spend time on deep candidate search when the current board
+    # already contains a direct contradiction.
+    if not any(d.category == "contradiction" for d in deductions):
+        for d in rule_candidate_domains(board):
             signature = (d.rule, d.title)
             if signature not in seen:
                 seen.add(signature)
