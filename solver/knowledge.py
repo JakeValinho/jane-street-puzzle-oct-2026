@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import time
 
 from .candidates import DomainResult, analyze_state_domain
-from .constraints import CELL_MIN_SIZES, singleton_capitol_candidates
+from .constraints import CELL_MIN_SIZES, is_locked_singleton_capitol, singleton_capitol_candidates
 from .model import BoardState
 from .puzzle import CLUES, N, from_index, index, label
 
@@ -439,6 +439,20 @@ def propagate_knowledge(
                     f"The 1 at {label(clue_cell)} has no possible adjacent singleton capitol.",
                     rounds, False, timed_out,
                 )
+
+            locked = [
+                cell for cell in candidates
+                if is_locked_singleton_capitol(work, cell)
+            ]
+            if locked:
+                add_fact({
+                    "type": "one-clue-satisfied",
+                    "cell": _cell_json(clue_cell),
+                    "count": len(locked),
+                    "options": [_cell_json(cell) for cell in locked],
+                    "text": f"The 1 at {label(clue_cell)} is already satisfied by a proved adjacent singleton capitol.",
+                })
+                continue
 
             add_fact({
                 "type": "one-clue-domain",
