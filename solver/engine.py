@@ -5,7 +5,7 @@ from math import ceil
 
 from .model import BoardState
 from .puzzle import CLUES, N, index, label, neighbors
-from .constraints import forced_singleton_capitols
+from .constraints import forced_singleton_capitols, is_locked_singleton_capitol
 from .candidates import analyze_state_domain
 
 
@@ -101,17 +101,17 @@ def rule_contradictions(board: BoardState):
                 rank=0,
             ))
 
-    # A positive clue cannot sit in a state that is already a singleton,
-    # because a one-square state necessarily has its only square as capitol.
+    # A positive clue cannot be inside a state that is PROVED to be a
+    # singleton, because that square would itself be a capitol with distance
+    # 0. A merely one-cell partial drawing is allowed to grow later.
     for cell, value in CLUES.items():
         if value <= 0:
             continue
-        state_id = board.state_at(cell)
-        if state_id is not None and board.current_size(state_id) == 1:
+        if is_locked_singleton_capitol(board, cell):
             out.append(Deduction(
                 rule="positive-clue-singleton",
                 title=f"{label(cell)} cannot be a singleton state",
-                explanation=f"Its clue is {value}, but a one-square state has its sole square as a capitol and would therefore have distance 0.",
+                explanation=f"Its clue is {value}, but a proved one-square state has its sole square as a capitol and would therefore have distance 0.",
                 cells=[cell],
                 choices=[],
                 category="contradiction",
