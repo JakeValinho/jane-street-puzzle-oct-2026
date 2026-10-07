@@ -5,8 +5,9 @@ import time
 
 from .candidates import analyze_state_domain
 from .constraints import singleton_capitol_candidates
+from .knowledge import propagate_knowledge
 from .model import BoardState
-from .puzzle import CLUES, N, index, label
+from .puzzle import CLUES, N, from_index, index, label
 
 
 @dataclass
@@ -36,13 +37,6 @@ def _cell_json(cell):
     return [cell[0] + 1, cell[1] + 1]
 
 
-def _copy_forbidden(board):
-    return {
-        state_id: set(cells)
-        for state_id, cells in board.forbidden_by_state.items()
-    }
-
-
 def _lock_singleton(board: BoardState, cell):
     owner = board.state_at(cell)
     if owner is None:
@@ -50,205 +44,46 @@ def _lock_singleton(board: BoardState, cell):
         board.assign(owner, cell)
     elif board.current_size(owner) != 1:
         raise SearchContradiction(
-            f"{label(cell)} would have to be a singleton capitol, but it already belongs to State {owner} with more than one selected square."
+            f"{label(cell)} would have to be a singleton capitol, but it already belongs to State {owner} with multiple certain cells."
         )
 
     marked = board.marked_capitol_cell(owner)
     if marked is not None and marked != cell:
         raise SearchContradiction(
-            f"State {owner} is required to be the singleton at {label(cell)}, but its marked capitol is elsewhere."
+            f"State {owner} would have to be the singleton at {label(cell)}, but its capitol is fixed elsewhere."
         )
 
     board.manual_capitols[owner] = index(cell)
-    for r in range(N):
-        for c in range(N):
-            other = (r, c)
-            if other != cell:
-                board.forbid(owner, other)
-
+    for i in range(N * N):
+        other = from_index(i)
+        if other != cell:
+            board.forbid(owner, other)
     return owner
 
 
-def _ensure_zero_capitol(board: BoardState, cell):
-    owner = board.state_at(cell)
-    created = False
-    if owner is None:
-        owner = board.next_state_id()
-        board.assign(owner, cell)
-        created = True
+def _lock_exact_shape(board: BoardState, state_id, shape):
+    shape = set(shape)
 
-    marked = board.marked_capitol_cell(owner)
-    if marked is not None and marked != cell:
-        raise SearchContradiction(
-            f"{label(cell)} has clue 0, but State {owner}'s marked capitol is {label(marked)}."
-        )
-    board.manual_capitols[owner] = index(cell)
-    return owner, created
-
-
-def _basic_contradiction(board: BoardState):
-    for state_id, cells in board.state_cells.items():
-        if any(board.is_forbidden(state_id, cell) for cell in cells):
-            return f"State {state_id} contains a square that the hypothetical branch forbids."
-        if not board.state_can_still_connect(state_id):
-            return f"State {state_id} can no longer be connected through its own or unassigned squares."
-
-    zero_owner = {}
-    for cell, value in CLUES.items():
-        if value != 0:
-            continue
+    for cell in shape:
         owner = board.state_at(cell)
-        if owner is None:
-            continue
-        if owner in zero_owner and zero_owner[owner] != cell:
-            return (
-                f"State {owner} contains both {label(zero_owner[owner])} and {label(cell)}, "
-                "but both clue-0 squares must be capitols."
-            )
-        zero_owner[owner] = cell
-
-    for state_id, cap_index in board.manual_capitols.items():
-        cap = divmod(cap_index, N)
-        owner = board.state_at(cap)
         if owner is not None and owner != state_id:
-            return f"State {state_id}'s marked capitol is owned by State {owner}."
-        if CLUES.get(cap, 0) > 0:
-            return f"{label(cap)} has a positive clue and therefore cannot itself be a capitol."
-
-    for clue_cell, value in CLUES.items():
-        if value == 1 and not singleton_capitol_candidates(board, clue_cell):
-            return f"The 1 at {label(clue_cell)} has no possible adjacent singleton capitol."
-
-    return None
-
-
-def _structurally_constrained(board: BoardState, state_id, cells):
-    return (
-        len(cells) >= 2
-        or board.marked_capitol_cell(state_id) is not None
-        or bool(board.forbidden_by_state.get(state_id))
-        or any(CLUES.get(cell) == 0 for cell in cells)
-    )
-
-
-def propagate(board: BoardState, budget: SearchBudget, collect_actions=False):
-    """
-    Repeatedly apply only deductions that are logically forced.
-
-    Returns (board, actions, contradiction_reason). Candidate-domain deductions
-    are used only when their infeasibility/forced membership is actually proved.
-    """
-    work = board.clone()
-    actions = []
-
-    for _round in range(12):
-        changed = False
-
-        contradiction = _basic_contradiction(work)
-        if contradiction:
-            return work, actions, contradiction
-
-        # Every clue 0 is a capitol. Starting a partial state at that square is
-        # bookkeeping only; the state may still grow.
-        for cell, value in CLUES.items():
-            if value != 0:
-                continue
-            before_owner = work.state_at(cell)
-            before_marked = (
-                None if before_owner is None
-                else work.marked_capitol_cell(before_owner)
+            raise SearchContradiction(
+                f"{label(cell)} already belongs to State {owner}, so this exact State {state_id} shape is impossible."
             )
-            try:
-                owner, created = _ensure_zero_capitol(work, cell)
-            except SearchContradiction as exc:
-                return work, actions, str(exc)
+        try:
+            board.assign(state_id, cell)
+        except ValueError as exc:
+            raise SearchContradiction(str(exc))
 
-            if created or before_marked != cell:
-                changed = True
-                if collect_actions:
-                    actions.append({
-                        "type": "zero_capitol",
-                        "state": owner,
-                        "cell": _cell_json(cell),
-                        "text": f"{label(cell)} is forced to be a capitol.",
-                    })
-
-        # A 1-clue with one surviving candidate forces an exact singleton.
-        for clue_cell, value in CLUES.items():
-            if value != 1:
-                continue
-            candidates = singleton_capitol_candidates(work, clue_cell)
-            if not candidates:
-                return work, actions, f"The 1 at {label(clue_cell)} has no possible singleton capitol."
-            if len(candidates) == 1:
-                cell = candidates[0]
-                owner_before = work.state_at(cell)
-                was_locked = False
-                if owner_before is not None:
-                    forbidden = work.forbidden_by_state.get(owner_before, set())
-                    was_locked = len(forbidden) >= N * N - 1
-                try:
-                    owner = _lock_singleton(work, cell)
-                except SearchContradiction as exc:
-                    return work, actions, str(exc)
-                if not was_locked:
-                    changed = True
-                    if collect_actions:
-                        actions.append({
-                            "type": "singleton_capitol",
-                            "state": owner,
-                            "cell": _cell_json(cell),
-                            "text": f"{label(cell)} is forced to be a singleton capitol by the 1 at {label(clue_cell)}.",
-                        })
-
-        contradiction = _basic_contradiction(work)
-        if contradiction:
-            return work, actions, contradiction
-
-        # Use the exact candidate-domain engine as propagation. Keep this
-        # intentionally shallow per pass so recursive look-ahead stays fast.
-        if budget.available():
-            for state_id, cells in list(work.state_cells.items()):
-                if not budget.available():
-                    break
-                if not _structurally_constrained(work, state_id, cells):
-                    continue
-
-                per_call = min(0.28, max(0.05, budget.remaining_seconds()))
-                domain = analyze_state_domain(
-                    work,
-                    state_id,
-                    time_limit=per_call,
-                    max_forced_checks=5,
-                    compute_bounds=False,
-                )
-
-                if not domain.feasible and domain.exact:
-                    return (
-                        work,
-                        actions,
-                        f"State {state_id} has no legal connected symmetric completion under this hypothesis.",
-                    )
-
-                for forced_cell in sorted(domain.forced_cells - set(cells)):
-                    try:
-                        work.assign(state_id, forced_cell)
-                    except ValueError as exc:
-                        return work, actions, str(exc)
-                    changed = True
-                    if collect_actions:
-                        actions.append({
-                            "type": "add_cell",
-                            "state": state_id,
-                            "cell": _cell_json(forced_cell),
-                            "text": f"{label(forced_cell)} is in every legal completion of State {state_id}.",
-                        })
-
-        if not changed:
-            break
-
-    contradiction = _basic_contradiction(work)
-    return work, actions, contradiction
+    for i in range(N * N):
+        cell = from_index(i)
+        if cell in shape:
+            continue
+        if board.state_at(cell) == state_id:
+            raise SearchContradiction(
+                f"The proposed exact State {state_id} shape omits already-certain square {label(cell)}."
+            )
+        board.forbid(state_id, cell)
 
 
 def _singleton_branches(board: BoardState):
@@ -279,20 +114,51 @@ def _singleton_branches(board: BoardState):
     return branches
 
 
+def _shape_branches(knowledge):
+    branches = []
+    for state_id, state in knowledge.states.items():
+        if not state.candidate_count_exact:
+            continue
+        shapes = state.candidate_shapes
+        if not (2 <= len(shapes) <= 3):
+            continue
+
+        options = []
+        cells = set(state.certain_cells)
+        for number, shape in enumerate(shapes, start=1):
+            cells |= set(shape)
+            options.append({
+                "type": "state_exact_shape",
+                "state": state_id,
+                "shape0": set(shape),
+                "shape": [_cell_json(cell) for cell in sorted(shape)],
+                "description": f"State {state_id} uses complete shape {number} of {len(shapes)}",
+            })
+
+        branches.append({
+            "kind": "state-shape",
+            "title": f"Which of the {len(shapes)} remaining complete shapes is State {state_id}?",
+            "cells0": sorted(cells),
+            "options": options,
+            "priority": 1,
+        })
+    return branches
+
+
 def _membership_branches(board: BoardState, budget: SearchBudget):
     branches = []
     for state_id, cells in board.state_cells.items():
         if not budget.available():
             break
-        if not _structurally_constrained(board, state_id, cells):
-            continue
 
         domain = analyze_state_domain(
             board,
             state_id,
-            time_limit=min(0.35, max(0.05, budget.remaining_seconds())),
+            time_limit=min(0.30, max(0.04, budget.remaining_seconds())),
             max_forced_checks=6,
+            max_exclusion_checks=0,
             compute_bounds=False,
+            enumerate_limit=0,
         )
         if not domain.feasible or domain.branch_cell is None:
             continue
@@ -320,20 +186,26 @@ def _membership_branches(board: BoardState, budget: SearchBudget):
                     "description": f"{label(cell)} is not in State {state_id}",
                 },
             ],
-            "priority": 1,
+            "priority": 2,
         })
     return branches
 
 
-def choose_branch(board: BoardState, budget: SearchBudget):
-    branches = _singleton_branches(board)
+def choose_branch(board: BoardState, knowledge, budget: SearchBudget):
+    branches = []
+    branches.extend(_singleton_branches(board))
+    branches.extend(_shape_branches(knowledge))
     branches.extend(_membership_branches(board, budget))
     if not branches:
         return None
 
-    # Minimum Remaining Values: fewest options first. Among equal-sized
-    # branches, direct clue choices beat generic membership splits.
-    branches.sort(key=lambda b: (len(b["options"]), b["priority"], b["title"]))
+    # Minimum Remaining Values. Direct clue branches win ties, then complete
+    # state-shape domains, then generic cell-membership hypotheses.
+    branches.sort(key=lambda branch: (
+        len(branch["options"]),
+        branch["priority"],
+        branch["title"],
+    ))
     return branches[0]
 
 
@@ -343,6 +215,10 @@ def apply_option(board: BoardState, option):
 
     if kind == "singleton_capitol":
         _lock_singleton(work, option["cell0"])
+        return work
+
+    if kind == "state_exact_shape":
+        _lock_exact_shape(work, int(option["state"]), option["shape0"])
         return work
 
     if kind == "state_cell_membership":
@@ -356,63 +232,12 @@ def apply_option(board: BoardState, option):
         else:
             if work.state_at(cell) == state_id:
                 raise SearchContradiction(
-                    f"{label(cell)} is already selected into State {state_id}."
+                    f"{label(cell)} is already certain to be in State {state_id}."
                 )
             work.forbid(state_id, cell)
         return work
 
     raise ValueError(f"Unsupported hypothetical option: {kind}")
-
-
-def _prove_contradiction(board: BoardState, depth: int, budget: SearchBudget):
-    if not budget.use_node():
-        return {
-            "status": "unknown",
-            "reason": "Search budget exhausted before a contradiction could be proved.",
-        }
-
-    propagated, _actions, contradiction = propagate(board, budget, collect_actions=False)
-    if contradiction:
-        return {"status": "contradiction", "reason": contradiction}
-
-    if depth <= 0 or not budget.available():
-        return {
-            "status": "unknown",
-            "reason": "No contradiction was proved within the current look-ahead depth.",
-        }
-
-    branch = choose_branch(propagated, budget)
-    if branch is None:
-        return {
-            "status": "unknown",
-            "reason": "No small exhaustive branch is currently available.",
-        }
-
-    children = []
-    for option in branch["options"]:
-        try:
-            child_board = apply_option(propagated, option)
-        except SearchContradiction as exc:
-            result = {"status": "contradiction", "reason": str(exc)}
-        else:
-            result = _prove_contradiction(child_board, depth - 1, budget)
-        children.append((option, result))
-
-    if children and all(result["status"] == "contradiction" for _, result in children):
-        return {
-            "status": "contradiction",
-            "reason": (
-                f"Every option for '{branch['title']}' leads to a contradiction "
-                f"within {depth} remaining look-ahead level(s)."
-            ),
-            "branch": _public_branch(branch, children),
-        }
-
-    return {
-        "status": "unknown",
-        "reason": "At least one branch survives the current search depth.",
-        "branch": _public_branch(branch, children),
-    }
 
 
 def _public_option(option):
@@ -426,6 +251,8 @@ def _public_option(option):
         out["cell"] = option["cell"]
     if "value" in option:
         out["value"] = option["value"]
+    if "shape" in option:
+        out["shape"] = option["shape"]
     return out
 
 
@@ -448,6 +275,71 @@ def _public_branch(branch, children=None):
     return out
 
 
+def _propagate_for_search(board, budget, collect_actions=False, deep=False):
+    result = propagate_knowledge(
+        board,
+        deadline=budget.deadline,
+        max_rounds=10,
+        deep=deep,
+        collect_actions=collect_actions,
+    )
+    return result
+
+
+def _prove_contradiction(board: BoardState, depth: int, budget: SearchBudget):
+    if not budget.use_node():
+        return {
+            "status": "unknown",
+            "reason": "Search budget exhausted before a contradiction could be proved.",
+        }
+
+    knowledge = _propagate_for_search(board, budget, collect_actions=False, deep=False)
+    if knowledge.contradiction:
+        return {"status": "contradiction", "reason": knowledge.contradiction}
+
+    if depth <= 0 or not budget.available():
+        return {
+            "status": "unknown",
+            "reason": "No contradiction was proved within the current look-ahead depth.",
+        }
+
+    branch = choose_branch(knowledge.board, knowledge, budget)
+    if branch is None:
+        return {
+            "status": "unknown",
+            "reason": "No small exhaustive branch is currently available.",
+        }
+
+    children = []
+    for option in branch["options"]:
+        try:
+            child_board = apply_option(knowledge.board, option)
+        except SearchContradiction as exc:
+            result = {"status": "contradiction", "reason": str(exc)}
+        else:
+            result = _prove_contradiction(child_board, depth - 1, budget)
+        children.append((option, result))
+
+    if children and all(
+        result["status"] == "contradiction"
+        for _, result in children
+    ):
+        return {
+            "status": "contradiction",
+            "reason": (
+                f"Every option for '{branch['title']}' leads to a contradiction "
+                f"within {depth} remaining look-ahead level(s)."
+            ),
+            "branch": _public_branch(branch, children),
+        }
+
+    return {
+        "status": "unknown",
+        "reason": "At least one branch survives the current search depth.",
+        "branch": _public_branch(branch, children),
+    }
+
+
 def analyze_lookahead(
     board: BoardState,
     depth=2,
@@ -463,48 +355,72 @@ def analyze_lookahead(
         max_nodes=max_nodes,
     )
 
-    propagated, actions, contradiction = propagate(
+    knowledge = _propagate_for_search(
         board,
         budget,
         collect_actions=True,
+        deep=True,
     )
 
-    if contradiction:
+    if knowledge.contradiction:
         return {
             "status": "contradiction",
             "title": "Current board is contradictory",
-            "explanation": contradiction,
+            "explanation": knowledge.contradiction,
             "cells": [],
             "depth": depth,
             "nodes": budget.nodes,
+            "knowledge": knowledge.to_dict(),
         }
 
-    if actions:
+    if knowledge.actions:
+        cells = []
+        for action in knowledge.actions:
+            if "cell" in action:
+                cells.append(action["cell"])
+            cells.extend(action.get("cells", []))
+
         return {
             "status": "propagation",
-            "title": f"{len(actions)} direct forced move" + ("" if len(actions) == 1 else "s") + " found before branching",
-            "explanation": "Apply these first; hypothetical branching is unnecessary until ordinary propagation stalls.",
-            "actions": actions,
-            "cells": [action["cell"] for action in actions if "cell" in action],
+            "title": (
+                f"{len(knowledge.actions)} forced knowledge update"
+                + ("" if len(knowledge.actions) == 1 else "s")
+                + " found before branching"
+            ),
+            "explanation": (
+                "These are consequences of direct rules, candidate intersections, "
+                "candidate exclusions, or a uniquely determined state shape. "
+                "No speculative choice needs to be committed yet."
+            ),
+            "actions": knowledge.actions,
+            "facts": knowledge.facts,
+            "cells": cells,
             "depth": depth,
             "nodes": budget.nodes,
+            "fixed_point": knowledge.fixed_point,
+            "knowledge": knowledge.to_dict(),
         }
 
-    branch = choose_branch(propagated, budget)
+    branch = choose_branch(knowledge.board, knowledge, budget)
     if branch is None:
         return {
             "status": "no-branch",
-            "title": "No small exhaustive branch found",
-            "explanation": "The current rules did not expose a 2- or few-choice hypothesis to test.",
+            "title": "Propagation reached a fixed point with no small branch",
+            "explanation": (
+                "No direct forced move remains and the current engine did not expose "
+                "a small exhaustive clue, state-shape, or cell-membership domain."
+            ),
             "cells": [],
             "depth": depth,
             "nodes": budget.nodes,
+            "fixed_point": knowledge.fixed_point,
+            "knowledge": knowledge.to_dict(),
         }
 
     children = []
     for option in branch["options"]:
         try:
-            child = apply_option(propagated, option)
+            child = apply_option(knowledge.board, option)
         except SearchContradiction as exc:
             result = {"status": "contradiction", "reason": str(exc)}
         else:
@@ -537,6 +453,7 @@ def analyze_lookahead(
             "cells": cells,
             "depth": depth,
             "nodes": budget.nodes,
+            "knowledge": knowledge.to_dict(),
         }
 
     if len(survivors) == 1 and contradicted:
@@ -547,7 +464,7 @@ def analyze_lookahead(
             "title": "Look-ahead forces one option",
             "explanation": (
                 f"All alternatives to '{forced_option['description']}' lead to contradictions "
-                f"within depth {depth}."
+                f"within depth {depth}. The survivor is logically forced; it was never guessed onto the real board."
             ),
             "forced_option": forced_option,
             "eliminated_options": eliminated,
@@ -555,15 +472,19 @@ def analyze_lookahead(
             "cells": cells,
             "depth": depth,
             "nodes": budget.nodes,
+            "knowledge": knowledge.to_dict(),
         }
 
     if contradicted:
         return {
             "status": "narrowed",
-            "title": f"Look-ahead eliminates {len(contradicted)} option" + ("" if len(contradicted) == 1 else "s"),
+            "title": (
+                f"Look-ahead eliminates {len(contradicted)} option"
+                + ("" if len(contradicted) == 1 else "s")
+            ),
             "explanation": (
                 f"The branch '{branch['title']}' still has {len(survivors)} surviving option(s), "
-                f"but the listed alternatives are impossible within depth {depth}."
+                f"but the contradictory alternatives are permanently impossible."
             ),
             "eliminated_options": [_public_option(option) for option, _ in contradicted],
             "surviving_options": [_public_option(option) for option, _ in survivors],
@@ -571,17 +492,22 @@ def analyze_lookahead(
             "cells": cells,
             "depth": depth,
             "nodes": budget.nodes,
+            "knowledge": knowledge.to_dict(),
         }
 
     return {
         "status": "unresolved",
-        "title": f"No contradiction found for the best {len(children)}-way branch",
+        "title": (
+            f"No contradiction found for the best {len(children)}-way branch"
+        ),
         "explanation": (
-            f"The solver tested '{branch['title']}' recursively to depth {depth}, "
-            "but every option survived the current proof budget."
+            f"The solver selected '{branch['title']}' using minimum remaining values "
+            f"and tested every option recursively to depth {depth}. Every option survived "
+            "the current proof budget, so nothing is committed."
         ),
         "branch": public_branch,
         "cells": cells,
         "depth": depth,
         "nodes": budget.nodes,
+        "knowledge": knowledge.to_dict(),
     }
