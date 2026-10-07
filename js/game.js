@@ -12,6 +12,7 @@
   var activeRegion = null;
   var nextId = 1;
   var manualCapitols = {};
+  var forbiddenByState = {};
   var capitolMode = false;
   var undoStack = [];
   var redoStack = [];
@@ -33,6 +34,7 @@
   var capitolModeBtn = document.getElementById('capitolMode');
   var solverStepBtn = document.getElementById('solverStep');
   var propagateKnowledgeBtn = document.getElementById('propagateKnowledge');
+  var applyForcedBtn = document.getElementById('applyForced');
   var pruneStateBtn = document.getElementById('pruneState');
   var lookAheadBtn = document.getElementById('lookAhead');
   var solverOutput = document.getElementById('solverOutput');
@@ -52,13 +54,28 @@
     return out;
   }
 
+  function cloneForbiddenByState(source) {
+    var out = {};
+    Object.keys(source || {}).forEach(function (rawId) {
+      out[rawId] = (source[rawId] || []).map(function (cell) {
+        return [Number(cell[0]), Number(cell[1])];
+      });
+    });
+    return out;
+  }
+
+  function clearStoredSolverExclusions() {
+    if (Object.keys(forbiddenByState).length) forbiddenByState = {};
+  }
+
   function snapshot() {
     return {
       assignments: assignments.slice(),
       regions: regions.map(function (r) { return { id: r.id, color: r.color }; }),
       activeRegion: activeRegion,
       nextId: nextId,
-      manualCapitols: Object.assign({}, manualCapitols)
+      manualCapitols: Object.assign({}, manualCapitols),
+      forbiddenByState: cloneForbiddenByState(forbiddenByState)
     };
   }
 
@@ -112,6 +129,44 @@
       cleanCapitols[id] = cellIndex;
     });
 
+    var cleanForbidden = {};
+    Object.keys(s.forbiddenByState || {}).forEach(function (rawId) {
+      var id = Number(rawId);
+      if (!Number.isInteger(id) || id <= 0) throw new Error('Forbidden-state ID is invalid.');
+      var seen = new Set();
+      var cells = [];
+      (s.forbiddenByState[rawId] || []).forEach(function (rawCell) {
+        var r, col;
+        if (Number.isInteger(rawCell)) {
+          if (rawCell < 0 || rawCell >= N * N) throw new Error('Forbidden cell is outside the board.');
+          var pair = rc(rawCell);
+          r = pair[0] + 1;
+          col = pair[1] + 1;
+        } else if (Array.isArray(rawCell) && rawCell.length === 2) {
+          r = Number(rawCell[0]);
+          col = Number(rawCell[1]);
+          if (!Number.isInteger(r) || !Number.isInteger(col) || r < 1 || r > N || col < 1 || col > N) {
+            throw new Error('Forbidden cell coordinates are outside the board.');
+          }
+        } else {
+          throw new Error('Forbidden cells must be board indices or [row, col] pairs.');
+        }
+        var cellIndex = idx(r - 1, col - 1);
+        if (cleanAssignments[cellIndex] === id) {
+          throw new Error('A state cannot both contain and exclude the same cell.');
+        }
+        var key = r + ',' + col;
+        if (!seen.has(key)) {
+          seen.add(key);
+          cells.push([r, col]);
+        }
+      });
+      cleanForbidden[id] = cells;
+      if (!regionMap.has(id) && cells.length) {
+        regionMap.set(id, { id: id, color: colorFor(id) });
+      }
+    });
+
     var ids = Array.from(regionMap.keys());
     var maxId = ids.length ? Math.max.apply(null, ids) : 0;
     var requestedNext = Number(s.nextId);
@@ -124,7 +179,8 @@
       regions: Array.from(regionMap.values()).sort(function (a, b) { return a.id - b.id; }),
       activeRegion: active,
       nextId: Math.max(1, cleanNext),
-      manualCapitols: cleanCapitols
+      manualCapitols: cleanCapitols,
+      forbiddenByState: cleanForbidden
     };
   }
 
@@ -135,6 +191,7 @@
     activeRegion = clean.activeRegion;
     nextId = clean.nextId;
     manualCapitols = Object.assign({}, clean.manualCapitols);
+    forbiddenByState = cloneForbiddenByState(clean.forbiddenByState);
     invalidate();
     render();
     save();
@@ -157,6 +214,7 @@
 
   function addRegion() {
     pushUndo();
+    clearStoredSolverExclusions();
     activeRegion = nextId++;
     regions.push({ id: activeRegion, color: colorFor(activeRegion) });
     render();
@@ -169,6 +227,7 @@
 
   function paint(i, id) {
     if (assignments[i] === id) return false;
+    clearStoredSolverExclusions();
     clearCapitolIfMoved(i, assignments[i]);
     assignments[i] = id;
     invalidate();
@@ -177,6 +236,7 @@
 
   function erase(i) {
     if (assignments[i] == null) return false;
+    clearStoredSolverExclusions();
     clearCapitolIfMoved(i, assignments[i]);
     assignments[i] = null;
     invalidate();
@@ -187,6 +247,7 @@
     var size = regionSize(id);
     if (size && !window.confirm('Delete State ' + id + ' and unassign its ' + size + ' cell' + (size === 1 ? '' : 's') + '?')) return;
     pushUndo();
+    clearStoredSolverExclusions();
     assignments = assignments.map(function (v) { return v === id ? null : v; });
     delete manualCapitols[id];
     regions = regions.filter(function (r) { return r.id !== id; });
@@ -210,6 +271,7 @@
       return;
     }
     pushUndo();
+    clearStoredSolverExclusions();
     activeRegion = id;
     if (Number(manualCapitols[id]) === i) {
       delete manualCapitols[id];
@@ -591,7 +653,8 @@
   function solverBoardFingerprint() {
     return JSON.stringify({
       assignments: assignments,
-      manualCapitols: manualCapitols
+      manualCapitols: manualCapitols,
+      forbiddenByState: forbiddenByState
     });
   }
 
@@ -789,6 +852,111 @@
     }
   }
 
+  function countForbiddenCells(map) {
+    return Object.keys(map || {}).reduce(function (total, key) {
+      return total + (map[key] || []).length;
+    }, 0);
+  }
+
+  async function applyForcedFacts() {
+    applyForcedBtn.disabled = true;
+    solverOutput.textContent = 'Proving and applying every currently forced fact...';
+    try {
+      var payload = snapshot();
+      payload.time_budget = 10;
+      payload.max_rounds = 16;
+      payload.deep = true;
+
+      var response = await fetch('/api/knowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Knowledge request failed');
+      if (result.contradiction) {
+        solverOutput.innerHTML =
+          '<div class="solver-title status-bad">Cannot apply deductions</div>' +
+          '<div>' + result.contradiction + '</div>';
+        return;
+      }
+      if (!result.internal_board) throw new Error('Solver did not return an internal board.');
+
+      var before = snapshot();
+      var merged = {
+        assignments: result.internal_board.assignments,
+        manualCapitols: result.internal_board.manualCapitols || {},
+        forbiddenByState: result.internal_board.forbiddenByState || {},
+        regions: before.regions,
+        activeRegion: before.activeRegion,
+        nextId: before.nextId
+      };
+      var clean = normalizeSnapshot(merged);
+
+      var changedCells = [];
+      for (var i = 0; i < N * N; i++) {
+        if (before.assignments[i] !== clean.assignments[i]) changedCells.push(i);
+      }
+
+      var beforeCaps = JSON.stringify(before.manualCapitols || {});
+      var afterCaps = JSON.stringify(clean.manualCapitols || {});
+      var beforeForbidden = countForbiddenCells(before.forbiddenByState);
+      var afterForbidden = countForbiddenCells(clean.forbiddenByState);
+      var stateCountBefore = new Set(before.assignments.filter(function (x) { return x != null; })).size;
+      var stateCountAfter = new Set(clean.assignments.filter(function (x) { return x != null; })).size;
+
+      var anythingChanged =
+        changedCells.length > 0 ||
+        beforeCaps !== afterCaps ||
+        JSON.stringify(before.forbiddenByState || {}) !== JSON.stringify(clean.forbiddenByState || {});
+
+      if (!anythingChanged) {
+        solverFocus = new Set();
+        solverOutput.innerHTML =
+          '<div class="solver-title">No new forced board facts</div>' +
+          '<div>The knowledge engine reached its current fixed point without finding another cell, capitol, or exclusion that can be safely committed.</div>' +
+          '<div class="solver-meta">Use Recursive look-ahead next if you want it to test near-forced branches by contradiction.</div>';
+        render();
+        return;
+      }
+
+      pushUndo();
+      assignments = clean.assignments.slice();
+      regions = clean.regions.map(function (r) { return { id: r.id, color: r.color }; });
+      activeRegion = clean.activeRegion;
+      nextId = clean.nextId;
+      manualCapitols = Object.assign({}, clean.manualCapitols);
+      forbiddenByState = cloneForbiddenByState(clean.forbiddenByState);
+      invalidate();
+      solverFocus = new Set(changedCells);
+
+      var actionLines = (result.actions || []).slice(0, 18).map(function (action) {
+        return '• ' + action.text;
+      });
+
+      solverOutput.innerHTML =
+        '<div class="solver-title status-good">Applied proved deductions to the board</div>' +
+        '<div>Filled ' + changedCells.length + ' new square' + (changedCells.length === 1 ? '' : 's') +
+        ', changed the number of visible states from ' + stateCountBefore + ' to ' + stateCountAfter +
+        ', and retained ' + afterForbidden + ' proved state-cell exclusion' + (afterForbidden === 1 ? '' : 's') +
+        ' for future solver passes.</div>' +
+        (actionLines.length ? '<div class="solver-options"><b>Applied reasoning</b><br>' + actionLines.join('<br>') + '</div>' : '') +
+        '<div class="solver-meta">Only facts proved by fixed-point propagation were committed. Near-forced guesses were not applied.</div>';
+
+      summary.textContent =
+        'Solver applied ' + changedCells.length + ' forced square' + (changedCells.length === 1 ? '' : 's') +
+        '. You can Undo this in one step.';
+      render();
+      save();
+    } catch (err) {
+      solverFocus = new Set();
+      solverOutput.textContent = 'Could not apply forced facts. Make sure python app.py is running.\n\n' + err.message;
+      render();
+    } finally {
+      applyForcedBtn.disabled = false;
+    }
+  }
+
   async function pruneActiveState() {
     if (activeRegion == null) {
       solverOutput.textContent = 'Select a state first.';
@@ -936,6 +1104,7 @@
   document.getElementById('check').addEventListener('click', validateAndCheck);
   solverStepBtn.addEventListener('click', pythonNextStep);
   propagateKnowledgeBtn.addEventListener('click', propagateCertainFacts);
+  applyForcedBtn.addEventListener('click', applyForcedFacts);
   pruneStateBtn.addEventListener('click', pruneActiveState);
   lookAheadBtn.addEventListener('click', recursiveLookAhead);
   capitolModeBtn.addEventListener('click', function () { setCapitolMode(!capitolMode); });
@@ -957,6 +1126,7 @@
     activeRegion = null;
     nextId = 1;
     manualCapitols = {};
+    forbiddenByState = {};
     invalidate();
     summary.textContent = 'Board cleared.';
     render();
@@ -994,6 +1164,7 @@
       activeRegion = clean.activeRegion;
       nextId = clean.nextId;
       manualCapitols = clean.manualCapitols;
+      forbiddenByState = cloneForbiddenByState(clean.forbiddenByState);
     } catch (err) {
       try { localStorage.removeItem(STORAGE_KEY); } catch (ignore) {}
       summary.textContent = 'Saved progress was invalid and has been ignored: ' + err.message;
