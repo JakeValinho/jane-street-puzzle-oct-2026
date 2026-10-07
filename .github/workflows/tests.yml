@@ -15,6 +15,10 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      - run: python -m compileall -q solver app.py
+        env:
+          PYTHONPATH: .
+      - run: node --check js/game.js
       - run: python -m pytest -q
         env:
           PYTHONPATH: .
