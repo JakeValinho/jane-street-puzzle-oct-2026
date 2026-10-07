@@ -532,3 +532,198 @@ def analyze_lookahead(
         "nodes": budget.nodes,
         "knowledge": knowledge.to_dict(),
     }
+
+
+
+def solve_logically(
+    board: BoardState,
+    max_depth=3,
+    time_budget=20.0,
+    max_nodes=120,
+    max_iterations=20,
+):
+    """
+    Repeatedly solve without guessing.
+
+    1. Propagate every directly proved fact to a fixed point.
+    2. If stalled, choose the smallest exhaustive branch.
+    3. Test every option recursively.
+    4. Commit an option only when every alternative is proved contradictory.
+    5. Propagate again and repeat.
+
+    The returned board therefore contains only logical consequences of the
+    input position, including conclusions proved by contradiction.
+    """
+    max_depth = max(1, min(int(max_depth), 5))
+    time_budget = max(1.0, min(float(time_budget), 60.0))
+    max_nodes = max(4, min(int(max_nodes), 500))
+    max_iterations = max(1, min(int(max_iterations), 100))
+
+    budget = SearchBudget(
+        deadline=time.monotonic() + time_budget,
+        max_nodes=max_nodes,
+    )
+    current = board.clone()
+    actions = []
+    branch_history = []
+    stopped_reason = "fixed-point"
+
+    for iteration in range(max_iterations):
+        if not budget.available():
+            stopped_reason = "budget"
+            break
+
+        knowledge = propagate_knowledge(
+            current,
+            deadline=budget.deadline,
+            max_rounds=16,
+            deep=True,
+            collect_actions=True,
+        )
+        actions.extend(knowledge.actions)
+        current = knowledge.board
+
+        if knowledge.contradiction:
+            return {
+                "status": "contradiction",
+                "title": "Logical solver found a contradiction",
+                "explanation": knowledge.contradiction,
+                "actions": actions,
+                "branches": branch_history,
+                "iterations": iteration + 1,
+                "nodes": budget.nodes,
+                "knowledge": knowledge.to_dict(),
+                "internal_board": knowledge.to_dict()["internal_board"],
+            }
+
+        if not budget.available():
+            stopped_reason = "budget"
+            break
+
+        branch = choose_branch(current, knowledge, budget)
+        if branch is None:
+            stopped_reason = "no-branch"
+            break
+
+        forced_option = None
+        final_children = None
+        used_depth = None
+
+        # Iterative deepening keeps the reasoning human-readable: try the
+        # cheapest contradiction proof first, then look farther only if needed.
+        for depth in range(1, max_depth + 1):
+            if not budget.available():
+                break
+
+            children = []
+            for option in branch["options"]:
+                if not budget.available():
+                    break
+                try:
+                    child = apply_option(current, option)
+                except SearchContradiction as exc:
+                    result = {"status": "contradiction", "reason": str(exc)}
+                else:
+                    result = _prove_contradiction(child, depth - 1, budget)
+                children.append((option, result))
+
+            if len(children) != len(branch["options"]):
+                break
+
+            contradicted = [
+                (option, result)
+                for option, result in children
+                if result["status"] == "contradiction"
+            ]
+            survivors = [
+                (option, result)
+                for option, result in children
+                if result["status"] != "contradiction"
+            ]
+
+            final_children = children
+            used_depth = depth
+
+            if len(survivors) == 1 and len(contradicted) == len(children) - 1:
+                forced_option = survivors[0][0]
+                break
+
+        public_branch = _public_branch(branch, final_children)
+        branch_history.append({
+            "branch": public_branch,
+            "depth": used_depth,
+            "forced": None if forced_option is None else _public_option(forced_option),
+        })
+
+        if forced_option is None:
+            stopped_reason = "unresolved-branch"
+            break
+
+        try:
+            current = apply_option(current, forced_option)
+        except SearchContradiction as exc:
+            return {
+                "status": "contradiction",
+                "title": "Forced branch application contradicted the board",
+                "explanation": str(exc),
+                "actions": actions,
+                "branches": branch_history,
+                "iterations": iteration + 1,
+                "nodes": budget.nodes,
+            }
+
+        public_forced = _public_option(forced_option)
+        action = {
+            "type": "forced-by-contradiction",
+            "text": (
+                f"{public_forced['description']} is forced: every alternative "
+                f"was proved contradictory at look-ahead depth {used_depth}."
+            ),
+            "description": public_forced["description"],
+            "depth": used_depth,
+        }
+        if "state" in public_forced:
+            action["state"] = public_forced["state"]
+        if "cell" in public_forced:
+            action["cell"] = public_forced["cell"]
+        if "shape" in public_forced:
+            action["cells"] = public_forced["shape"]
+        actions.append(action)
+
+    # One final propagation makes the returned board include consequences of
+    # the last forced-by-contradiction branch.
+    final_knowledge = propagate_knowledge(
+        current,
+        deadline=budget.deadline,
+        max_rounds=16,
+        deep=True,
+        collect_actions=True,
+    )
+    actions.extend(final_knowledge.actions)
+    final_dict = final_knowledge.to_dict()
+
+    changed_cells = sum(
+        a != b
+        for a, b in zip(board.assignments, final_knowledge.board.assignments)
+    )
+
+    return {
+        "status": "progress" if changed_cells or actions else "stuck",
+        "title": (
+            "Logical solver made progress"
+            if changed_cells or actions
+            else "Logical solver reached a proof fixed point"
+        ),
+        "explanation": (
+            f"Stopped because: {stopped_reason}. "
+            "No unresolved option was ever committed as a guess."
+        ),
+        "actions": actions,
+        "branches": branch_history,
+        "iterations": min(max_iterations, len(branch_history) + 1),
+        "nodes": budget.nodes,
+        "changed_cells": changed_cells,
+        "stopped_reason": stopped_reason,
+        "knowledge": final_dict,
+        "internal_board": final_dict["internal_board"],
+    }
