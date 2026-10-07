@@ -521,6 +521,9 @@
       return 'state containing r' + choice.cell[0] + 'c' + choice.cell[1] + ' has size ≥ ' + choice.minimum;
     }
     if (choice.type === 'state_size_parity') return 'State ' + choice.state + ' must finish ' + choice.parity + ' (at least ' + choice.minimum + ')';
+    if (choice.type === 'add_cells') return 'add to State ' + choice.state + ': ' + choice.cells.map(function (cell) { return 'r' + cell[0] + 'c' + cell[1]; }).join(', ');
+    if (choice.type === 'state_size_exact') return 'State ' + choice.state + ' final size = ' + choice.size;
+    if (choice.type === 'state_size_range') return 'State ' + choice.state + ' final size ' + choice.minimum + '–' + choice.maximum;
     return JSON.stringify(choice);
   }
 
