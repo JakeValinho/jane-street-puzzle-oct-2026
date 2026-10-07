@@ -114,6 +114,7 @@ def test_javascript_referenced_controls_exist_in_html():
         "capitolMode",
         "solverStep",
         "propagateKnowledge",
+        "applyForced",
         "pruneState",
         "lookAhead",
         "solverOutput",
@@ -148,3 +149,28 @@ def test_domain_api_smoke_for_known_singleton():
     assert result["feasible"] is True
     assert result["min_size"] is not None
     assert result["max_size"] is not None
+
+
+
+def test_knowledge_api_returns_board_that_can_be_applied():
+    client = app.test_client()
+    payload = empty_snapshot()
+    payload.update({"time_budget": 3.0, "max_rounds": 5, "deep": False})
+
+    response = client.post("/api/knowledge", json=payload)
+
+    assert response.status_code == 200
+    result = response.get_json()
+    board = result["internal_board"]
+
+    assert len(board["assignments"]) == N * N
+    # The two clue-0 anchors and the forced singleton at r6c11 should be
+    # materialized as real state assignments in the returned board.
+    assert board["assignments"][5 * N + 7] is not None   # r6c8
+    assert board["assignments"][10 * N + 5] is not None # r11c6
+    assert board["assignments"][5 * N + 10] is not None # r6c11
+
+    singleton_state = board["assignments"][5 * N + 10]
+    assert str(singleton_state) in board["manualCapitols"]
+    assert board["manualCapitols"][str(singleton_state)] == 5 * N + 10
+    assert len(board["forbiddenByState"][str(singleton_state)]) == N * N - 1
