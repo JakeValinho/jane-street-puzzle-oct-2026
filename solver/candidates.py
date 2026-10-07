@@ -455,7 +455,7 @@ class CandidateModel:
     def find(self, force_include=None, force_exclude=None, objective=None):
         built = self._build_model(force_include, force_exclude, objective)
         if built is None:
-            return None, False
+            return None, bool(self.reason)
 
         model, x, size = built
         solver = cp_model.CpSolver()
