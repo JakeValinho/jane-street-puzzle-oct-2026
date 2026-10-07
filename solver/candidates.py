@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable
+import heapq
+from collections import defaultdict
 
 from ortools.sat.python import cp_model
 
@@ -389,6 +391,56 @@ class CandidateModel:
 
         return model, x, size
 
+    def _complete_partition_matches_clues(self, assignments):
+        if any(owner is None for owner in assignments):
+            return True
+
+        state_cells = defaultdict(set)
+        for i, owner in enumerate(assignments):
+            state_cells[owner].add(from_index(i))
+
+        sizes = {}
+        capitols = []
+        for owner, cells in state_cells.items():
+            geom = analyze_shape(cells)
+            if not geom["valid"]:
+                return False
+            sizes[owner] = len(cells)
+            if geom["capitol"] is not None:
+                capitols.append(geom["capitol"])
+
+        if not capitols:
+            return False
+
+        inf = 10**18
+        dist = [inf] * (N * N)
+        heap = []
+        for cell in capitols:
+            i = index(cell)
+            if dist[i] != 0:
+                dist[i] = 0
+                heapq.heappush(heap, (0, i))
+
+        while heap:
+            d, u = heapq.heappop(heap)
+            if d != dist[u]:
+                continue
+            ur, uc = from_index(u)
+            owner_u = assignments[u]
+            for dr, dc in DIRS:
+                vr, vc = ur + dr, uc + dc
+                if not in_bounds((vr, vc)):
+                    continue
+                v = index((vr, vc))
+                owner_v = assignments[v]
+                weight = min(sizes[owner_u], sizes[owner_v])
+                nd = d + weight
+                if nd < dist[v]:
+                    dist[v] = nd
+                    heapq.heappush(heap, (nd, v))
+
+        return all(dist[index(cell)] == target for cell, target in CLUES.items())
+
     def _candidate_is_globally_legal(self, cells):
         cells = set(cells)
         geom = analyze_shape(cells)
@@ -449,6 +501,12 @@ class CandidateModel:
         for clue_cell, value in CLUES.items():
             if value == 1 and not singleton_capitol_candidates(temp, clue_cell):
                 return False
+
+        # If this candidate completes the whole board, enforce the full puzzle:
+        # every state's exact capitol status plus multi-source shortest-path
+        # travel costs must match every clue.
+        if not self._complete_partition_matches_clues(temp_assignments):
+            return False
 
         return True
 
