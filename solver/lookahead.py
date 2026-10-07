@@ -389,6 +389,7 @@ def _propagate_for_search(board, budget, collect_actions=False, deep=False):
         deep=deep,
         collect_actions=collect_actions,
         probe_ownership=False,
+        analyze_domains=False,
     )
     return result
 
@@ -803,6 +804,7 @@ def solve_logically(
         deep=True,
         collect_actions=True,
         probe_ownership=False,
+        analyze_domains=False,
     )
     actions.extend(final_knowledge.actions)
     final_dict = final_knowledge.to_dict()
