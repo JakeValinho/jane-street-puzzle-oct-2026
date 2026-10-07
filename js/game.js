@@ -21,6 +21,7 @@
   var dragEraseAnyState = false;
   var lastDistances = null;
   var clueStatus = {};
+  var searchPreviewAssignments = null;
 
   var board = document.getElementById('board');
   var stateList = document.getElementById('stateList');
@@ -37,6 +38,7 @@
   var applyForcedBtn = document.getElementById('applyForced');
   var pruneStateBtn = document.getElementById('pruneState');
   var lookAheadBtn = document.getElementById('lookAhead');
+  var searchSolveBtn = document.getElementById('searchSolve');
   var solverOutput = document.getElementById('solverOutput');
   var solverFocus = new Set();
   var solverDeductions = [];
@@ -208,6 +210,7 @@
     clueStatus = {};
     resultPanel.hidden = true;
     solverFocus = new Set();
+    searchPreviewAssignments = null;
   }
 
   function colorFor(id) { return BASE_COLORS[(id - 1) % BASE_COLORS.length]; }
@@ -495,8 +498,15 @@
         cell.dataset.i = i;
         if (solverFocus.has(i)) cell.classList.add('solver-focus');
 
-        if (id == null) cell.classList.add('unassigned');
-        else {
+        if (id == null) {
+          cell.classList.add('unassigned');
+          var previewId = searchPreviewAssignments ? searchPreviewAssignments[i] : null;
+          if (previewId != null) {
+            cell.classList.add('search-preview');
+            cell.style.background = colorFor(previewId);
+            cell.title = 'Speculative search preview: State ' + previewId;
+          }
+        } else {
           var reg = regionById(id);
           if (reg) cell.style.background = reg.color;
           if (id === activeRegion) cell.classList.add('active-region');
@@ -1100,6 +1110,92 @@
     }
   }
 
+  async function searchAndBacktrack() {
+    searchSolveBtn.disabled = true;
+    solverOutput.textContent = 'Exploring non-forced branches and backtracking from contradictions...';
+    try {
+      var payload = snapshot();
+      payload.time_budget = 20;
+      payload.max_nodes = 4000;
+
+      var response = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Search request failed');
+
+      var internal = result.internal_board;
+      if (!internal || !Array.isArray(internal.assignments)) {
+        throw new Error('Search did not return a board.');
+      }
+
+      var changed = [];
+      for (var i = 0; i < N * N; i++) {
+        if (assignments[i] !== internal.assignments[i]) changed.push(i);
+      }
+      solverFocus = new Set(changed);
+
+      if (result.status === 'solution') {
+        var before = snapshot();
+        var merged = {
+          assignments: internal.assignments,
+          manualCapitols: internal.manualCapitols || {},
+          forbiddenByState: internal.forbiddenByState || {},
+          regions: before.regions,
+          activeRegion: before.activeRegion,
+          nextId: before.nextId
+        };
+        var clean = normalizeSnapshot(merged);
+        pushUndo();
+        assignments = clean.assignments.slice();
+        regions = clean.regions.map(function (r) { return { id: r.id, color: r.color }; });
+        activeRegion = clean.activeRegion;
+        nextId = clean.nextId;
+        manualCapitols = Object.assign({}, clean.manualCapitols);
+        forbiddenByState = cloneForbiddenByState(clean.forbiddenByState);
+        searchPreviewAssignments = null;
+        lastDistances = null;
+        clueStatus = {};
+        resultPanel.hidden = true;
+        save();
+
+        solverOutput.innerHTML =
+          '<div class="solver-title status-good">Exact validated solution found</div>' +
+          '<div>The branch-and-backtrack search completed the board and the Python validator confirmed every state rule and every clue distance.</div>' +
+          '<div class="solver-meta">nodes ' + result.nodes +
+          ' · contradictions backtracked ' + result.contradictions + '</div>';
+        summary.textContent = 'Search found and applied an exact solution. Undo restores your previous board.';
+      } else {
+        searchPreviewAssignments = internal.assignments.slice();
+
+        var pathLines = (result.path || []).slice(0, 12).map(function (step, index) {
+          return (index + 1) + '. ' + step.choice.description;
+        });
+
+        solverOutput.innerHTML =
+          '<div class="solver-title">Speculative search preview</div>' +
+          '<div>The proof-only solver is genuinely stuck, so this mode explored non-forced hypotheses and backtracked from contradictions. Dashed cells are <b>not proved</b>; they are the deepest consistent branch reached within the search budget.</div>' +
+          '<div class="solver-options">Assigned in preview: ' + result.assigned_cells + '/' + (N * N) +
+          '<br>Search nodes: ' + result.nodes +
+          '<br>Contradictions backtracked: ' + result.contradictions + '</div>' +
+          (pathLines.length ? '<div class="solver-options"><b>Current hypothesis path</b><br>' + pathLines.join('<br>') + '</div>' : '') +
+          '<div class="solver-meta">The speculative preview is visual only and is not saved as certain board data.</div>';
+        summary.textContent = 'Search preview shown with dashed outlines; your actual logical board has not been changed.';
+      }
+
+      render();
+    } catch (err) {
+      searchPreviewAssignments = null;
+      solverFocus = new Set();
+      solverOutput.textContent = 'Could not run branch search. Make sure python app.py is running.\n\n' + err.message;
+      render();
+    } finally {
+      searchSolveBtn.disabled = false;
+    }
+  }
+
   document.getElementById('newState').addEventListener('click', addRegion);
   document.getElementById('check').addEventListener('click', validateAndCheck);
   solverStepBtn.addEventListener('click', pythonNextStep);
@@ -1107,6 +1203,7 @@
   applyForcedBtn.addEventListener('click', applyForcedFacts);
   pruneStateBtn.addEventListener('click', pruneActiveState);
   lookAheadBtn.addEventListener('click', recursiveLookAhead);
+  searchSolveBtn.addEventListener('click', searchAndBacktrack);
   capitolModeBtn.addEventListener('click', function () { setCapitolMode(!capitolMode); });
   document.getElementById('undo').addEventListener('click', function () {
     if (!undoStack.length) return;
