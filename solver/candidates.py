@@ -566,10 +566,15 @@ class CandidateModel:
         while rejected < 250:
             self.solver_calls += 1
             status = solver.Solve(model)
+            if status == cp_model.INFEASIBLE:
+                return None, True
+            if status in (cp_model.UNKNOWN, cp_model.MODEL_INVALID):
+                # UNKNOWN is a timeout/resource limit; MODEL_INVALID is a
+                # modelling/runtime error. Neither may be used as a proof of
+                # impossibility.
+                return None, False
             if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                if status == cp_model.UNKNOWN:
-                    exact = False
-                return None, exact
+                return None, False
 
             if objective is not None and status != cp_model.OPTIMAL:
                 exact = False
@@ -614,9 +619,13 @@ class CandidateModel:
             self.solver_calls += 1
             status = solver.Solve(model)
 
-            if status in (cp_model.INFEASIBLE, cp_model.MODEL_INVALID):
+            if status == cp_model.INFEASIBLE:
                 complete = True
                 break
+            if status == cp_model.MODEL_INVALID:
+                # A model error is never evidence that the candidate domain
+                # has been exhausted.
+                return found[:limit], False
             if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 break
 
