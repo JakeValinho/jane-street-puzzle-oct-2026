@@ -589,7 +589,7 @@ def analyze_state_domain(board: BoardState, state_id: int, time_limit=1.0):
         reason="Legal connected symmetric completions exist.",
         witness=witness,
         forced_cells=forced,
-        min_size=None if min_candidate is None else len(min_candidate),
-        max_size=None if max_candidate is None else len(max_candidate),
+        min_size=None if min_candidate is None or not min_exact else len(min_candidate),
+        max_size=None if max_candidate is None or not max_exact else len(max_candidate),
         solver_calls=cm.solver_calls,
     )
