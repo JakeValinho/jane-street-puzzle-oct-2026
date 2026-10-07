@@ -181,6 +181,7 @@ class CandidateModel:
         self.state_id = state_id
         self.time_limit = time_limit
         self.required = set(board.state_cells.get(state_id, []))
+        self.reason = ""
         self.other_assigned = {
             from_index(i)
             for i, owner in enumerate(board.assignments)
@@ -189,7 +190,6 @@ class CandidateModel:
         self.forced_singletons = forced_singleton_capitols(board)
         self.forced_capitol = self._derive_forced_capitol()
         self.exact_singleton = None
-        self.reason = ""
         self.solver_calls = 0
 
         overlap = self.required & self.forced_singletons
