@@ -102,3 +102,33 @@ pytest -q
 ```
 
 The initial tests verify the forced 0-clue capitols, the forced singleton at r6c11, and a basic contradiction involving the two 0 clues.
+
+
+## Constraint-based state pruning
+
+The solver now includes `solver/candidates.py`, which uses OR-Tools CP-SAT to represent legal completions of a currently drawn state without brute-force enumeration.
+
+For the active state, **Prune active state** discards any completion that violates the constraints currently encoded by the solver:
+
+- cannot leave the 11x11 board
+- cannot overlap a square already owned by another state
+- must contain every square already painted into that state
+- must be orthogonally connected
+- must be invariant under at least one nontrivial lattice rotation or reflection
+- must satisfy the puzzle's full capitol definition after the candidate shape is constructed
+- must respect manually marked capitols
+- clue-0 squares must be the capitol of their state
+- a state cannot contain two clue-0 squares
+- clue-1 forced singleton capitols cannot be absorbed into a larger state
+- clue-derived minimum state-size bounds are enforced
+- capitol-bearing states are constrained to odd size
+- a candidate may not eliminate every possible singleton capitol for a clue-1 square
+- a candidate may not make another already-started state impossible to connect
+- candidate capitols create additional local upper bounds on clue travel distances
+- if the candidate completes the board, the solver performs the full multi-source shortest-path calculation and requires every clue to match exactly
+
+The model is **implicit**: it does not need to list millions of polyominoes. To prove that a square is forced into a state, it asks whether *any* legal completion exists with that square excluded. If none exists, the square is forced.
+
+A timeout never creates a fake deduction. Size bounds are displayed only when CP-SAT proves the optimum, and cells are labelled forced only when infeasibility of the alternative is proved.
+
+The current layer is exact for the constraints above. A future global-search layer can go further by eliminating a locally legal state when it cannot coexist with any complete legal partition of the rest of the board.
