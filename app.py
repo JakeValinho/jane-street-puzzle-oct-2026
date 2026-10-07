@@ -16,7 +16,7 @@ app = Flask(__name__, static_folder=None)
 
 def _json_payload():
     try:
-        payload = _json_payload()
+        payload = request.get_json(force=True)
     except BadRequest as exc:
         raise ValueError("Request body must be valid JSON") from exc
     if not isinstance(payload, dict):
