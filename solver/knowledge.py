@@ -194,6 +194,16 @@ def find_basic_contradiction(board: BoardState):
                 f"{available} cells remain available to it."
             )
 
+    minimum_total_area = sum(
+        _state_min_size(board, state_id)
+        for state_id in board.state_cells
+    )
+    if minimum_total_area > N * N:
+        return (
+            f"Known distinct states require at least {minimum_total_area} cells "
+            f"in total, but the board has only {N * N}."
+        )
+
     zero_owner = {}
     for cell, value in CLUES.items():
         if value != 0:
