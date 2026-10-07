@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import pytest
 
 from solver.model import BoardState
@@ -41,3 +44,18 @@ def test_snapshot_rejects_out_of_range_forbidden_coordinate():
     snapshot["forbiddenByState"] = {"1": [[12, 1]]}
     with pytest.raises(ValueError, match="11x11"):
         BoardState.from_snapshot(snapshot)
+
+
+
+def test_javascript_and_python_clues_stay_in_sync():
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "js" / "puzzle.js").read_text(encoding="utf-8")
+
+    matches = re.findall(r"'(\d+),(\d+)'\s*:\s*(\d+)", js)
+    js_clues = {
+        (int(row) - 1, int(col) - 1): int(value)
+        for row, col, value in matches
+    }
+
+    assert js_clues == CLUES
+    assert "N: 11" in js
