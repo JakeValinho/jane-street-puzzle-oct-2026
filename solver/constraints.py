@@ -72,8 +72,14 @@ def is_locked_singleton_capitol(board, cell):
     if board.marked_capitol_cell(state_id) != cell:
         return False
 
-    forbidden = board.forbidden_by_state.get(state_id, set())
-    return len(forbidden) >= N * N - 1
+    for r in range(N):
+        for c in range(N):
+            other = (r, c)
+            if other == cell:
+                continue
+            if not board.is_forbidden(state_id, other):
+                return False
+    return True
 
 
 def forced_singleton_capitols(board):
