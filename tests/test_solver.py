@@ -1,3 +1,4 @@
+import time
 from solver.engine import analyze_snapshot
 from solver.puzzle import N, index
 
@@ -208,4 +209,24 @@ def test_positive_clue_cannot_be_a_proved_singleton():
         d["category"] == "contradiction"
         and d["rule"] == "positive-clue-singleton"
         for d in result["deductions"]
+    )
+
+
+
+def test_deep_blank_board_propagates_beyond_initial_capitol_facts():
+    board = BoardState.from_snapshot(empty_snapshot())
+    result = propagate_knowledge(
+        board,
+        deadline=time.monotonic() + 10.0,
+        max_rounds=8,
+        deep=True,
+        collect_actions=True,
+    )
+
+    assigned = sum(owner is not None for owner in result.board.assignments)
+    assert result.contradiction is None
+    assert assigned > 3, (
+        f"expected ownership/state-shape reasoning to move beyond the two zero "
+        f"anchors plus r6c11 singleton, but only {assigned} cells were assigned. "
+        f"actions={result.actions!r}; facts={result.facts!r}"
     )
