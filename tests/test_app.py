@@ -117,6 +117,7 @@ def test_javascript_referenced_controls_exist_in_html():
         "applyForced",
         "pruneState",
         "lookAhead",
+        "searchSolve",
         "solverOutput",
         "newState",
         "check",
@@ -174,3 +175,17 @@ def test_knowledge_api_returns_board_that_can_be_applied():
     assert str(singleton_state) in board["manualCapitols"]
     assert board["manualCapitols"][str(singleton_state)] == 5 * N + 10
     assert len(board["forbiddenByState"][str(singleton_state)]) == N * N - 1
+
+
+
+def test_search_api_makes_speculative_progress():
+    client = app.test_client()
+    payload = empty_snapshot()
+    payload.update({"time_budget": 2.0, "max_nodes": 100})
+
+    response = client.post("/api/search", json=payload)
+
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result["status"] in {"partial", "solution"}
+    assert result["assigned_cells"] > 3
