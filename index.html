@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>11×11 State Puzzle Solver</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+  <main>
+    <h1>11×11 State Puzzle Solver</h1>
+    <p class="sub">Paint the 121 cells into states. The game automatically checks connectivity, symmetry, capitols, travel costs, clue values, row sums, and the final score.</p>
+
+    <div class="toolbar">
+      <button id="newState" class="primary">New state (N)</button>
+      <button id="undo">Undo</button>
+      <button id="redo">Redo</button>
+      <button id="check">Check clues (C)</button>
+      <button id="capitolMode">Mark capitol (M)</button>
+      <button id="exportBtn">Export</button>
+      <button id="importBtn">Import</button>
+      <button id="clear" class="danger">Clear board</button>
+    </div>
+
+    <div class="board-wrap panel">
+      <div id="board" aria-label="11 by 11 puzzle grid"></div>
+    </div>
+  </main>
+
+  <aside class="side">
+    <section class="panel">
+      <h2>How to play</h2>
+      <div class="legend">
+        Left-click or drag to paint cells into the active state. Left-clicking a cell already in the active state removes it, so a selected square can be toggled off. Right-click also erases. Shift-click a filled cell to make its state active. Create a fresh state with <span class="kbd">N</span>. Press <span class="kbd">M</span> or use <b>Mark capitol</b>, then click a filled square to mark or unmark that state's capitol. Each state can have at most one marked capitol. Delete any state from the States panel. The small lower-right number is the state's current size.
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Display</h2>
+      <div class="checks">
+        <label class="toggle"><input type="checkbox" id="showIds"> Show state IDs</label>
+        <label class="toggle"><input type="checkbox" id="showDistances"> Show computed travel distance after checking</label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>States</h2>
+      <div id="stateList" class="state-list"></div>
+      <div class="tiny" id="activeInfo" style="margin-top:8px"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Validation</h2>
+      <div id="summary" class="message">Start by creating a state and painting cells.</div>
+    </section>
+
+    <section class="panel" id="resultPanel" hidden>
+      <h2>Solved</h2>
+      <div id="rowResults" class="row-results"></div>
+      <div id="finalAnswer" class="final-answer"></div>
+    </section>
+  </aside>
+</div>
+
+<script src="js/puzzle.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
