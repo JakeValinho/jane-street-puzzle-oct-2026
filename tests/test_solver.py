@@ -171,3 +171,41 @@ def test_locked_singleton_has_exactly_one_enumerated_candidate_shape():
     assert domain.feasible
     assert domain.candidate_count_exact
     assert domain.candidate_shapes == [{cell}]
+
+
+
+def test_positive_clue_can_be_the_first_cell_of_a_growing_state():
+    s = empty_snapshot()
+    clue_cell = (0, 1)  # r1c2 has clue 8
+    s["assignments"][index(clue_cell)] = 1
+
+    result = analyze_snapshot(s)
+
+    assert not any(
+        d["category"] == "contradiction"
+        and d["rule"] == "positive-clue-singleton"
+        for d in result["deductions"]
+    )
+
+
+def test_positive_clue_cannot_be_a_proved_singleton():
+    s = empty_snapshot()
+    clue_cell = (0, 1)  # r1c2 has clue 8
+    s["assignments"][index(clue_cell)] = 1
+    s["manualCapitols"] = {"1": index(clue_cell)}
+    s["forbiddenByState"] = {
+        "1": [
+            [r + 1, c + 1]
+            for r in range(N)
+            for c in range(N)
+            if (r, c) != clue_cell
+        ]
+    }
+
+    result = analyze_snapshot(s)
+
+    assert any(
+        d["category"] == "contradiction"
+        and d["rule"] == "positive-clue-singleton"
+        for d in result["deductions"]
+    )
