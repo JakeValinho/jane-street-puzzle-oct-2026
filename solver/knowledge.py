@@ -480,10 +480,7 @@ def propagate_knowledge(
             if len(candidates) == 1:
                 singleton = candidates[0]
                 owner_before = work.state_at(singleton)
-                locked_before = (
-                    owner_before is not None
-                    and len(work.forbidden_by_state.get(owner_before, set())) >= N * N - 1
-                )
+                locked_before = is_locked_singleton_capitol(work, singleton)
                 try:
                     owner, _created, _forbidden = _lock_singleton(work, singleton)
                 except ValueError as exc:
