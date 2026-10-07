@@ -166,6 +166,61 @@ def _shape_branches(knowledge):
     return branches
 
 
+def _owner_branches(knowledge):
+    """
+    Exhaustive ownership branches for informative unassigned cells.
+
+    This is broader than asking whether a cell belongs to one particular
+    state: every currently known state plus "some new state" is represented,
+    so the branch is logically exhaustive.
+    """
+    branches = []
+    ranked = sorted(
+        (
+            cell_knowledge
+            for cell_knowledge in knowledge.cells.values()
+            if cell_knowledge.forced_state is None
+            and cell_knowledge.min_state_size >= 3
+        ),
+        key=lambda info: (
+            len(info.possible_known_states) + (1 if info.new_state_possible else 0),
+            -info.min_state_size,
+            info.cell,
+        ),
+    )
+
+    for info in ranked[:8]:
+        options = []
+        for state_id in sorted(info.possible_known_states):
+            options.append({
+                "type": "cell_owner",
+                "state": state_id,
+                "cell0": info.cell,
+                "cell": _cell_json(info.cell),
+                "description": f"{label(info.cell)} belongs to State {state_id}",
+            })
+
+        if info.new_state_possible:
+            options.append({
+                "type": "cell_owner_new",
+                "cell0": info.cell,
+                "cell": _cell_json(info.cell),
+                "description": f"{label(info.cell)} belongs to a not-yet-named state",
+            })
+
+        if 2 <= len(options) <= 4:
+            branches.append({
+                "kind": "owner",
+                "title": f"Which state contains {label(info.cell)}?",
+                "cells0": [info.cell],
+                "options": options,
+                "priority": 2,
+                "information": info.min_state_size,
+            })
+
+    return branches
+
+
 def _membership_branches(board: BoardState, budget: SearchBudget):
     branches = []
     for state_id, cells in board.state_cells.items():
@@ -207,7 +262,7 @@ def _membership_branches(board: BoardState, budget: SearchBudget):
                     "description": f"{label(cell)} is not in State {state_id}",
                 },
             ],
-            "priority": 2,
+            "priority": 3,
         })
     return branches
 
@@ -216,12 +271,14 @@ def choose_branch(board: BoardState, knowledge, budget: SearchBudget):
     branches = []
     branches.extend(_singleton_branches(board))
     branches.extend(_shape_branches(knowledge))
+    branches.extend(_owner_branches(knowledge))
     branches.extend(_membership_branches(board, budget))
     if not branches:
         return None
 
     # Minimum Remaining Values. Direct clue branches win ties, then complete
-    # state-shape domains, then generic cell-membership hypotheses.
+    # state-shape domains, exhaustive cell-owner domains, and finally generic
+    # binary membership hypotheses.
     branches.sort(key=lambda branch: (
         len(branch["options"]),
         branch["priority"],
@@ -240,6 +297,28 @@ def apply_option(board: BoardState, option):
 
     if kind == "state_exact_shape":
         _lock_exact_shape(work, int(option["state"]), option["shape0"])
+        return work
+
+    if kind == "cell_owner":
+        state_id = int(option["state"])
+        cell = option["cell0"]
+        try:
+            work.assign(state_id, cell)
+        except ValueError as exc:
+            raise SearchContradiction(str(exc))
+        return work
+
+    if kind == "cell_owner_new":
+        cell = option["cell0"]
+        if work.state_at(cell) is not None:
+            raise SearchContradiction(
+                f"{label(cell)} already has a known owner."
+            )
+        state_id = work.next_state_id()
+        try:
+            work.assign(state_id, cell)
+        except ValueError as exc:
+            raise SearchContradiction(str(exc))
         return work
 
     if kind == "state_cell_membership":
