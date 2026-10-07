@@ -60,3 +60,45 @@ def test_forced_singleton_domain_stays_singleton():
     assert domain.min_size == 1
     assert domain.max_size == 1
     assert domain.forced_cells == {forced}
+
+
+from solver.lookahead import apply_option, analyze_lookahead
+
+
+def test_partial_one_cell_state_is_not_assumed_complete():
+    s = empty_snapshot()
+    s["assignments"][index((0, 0))] = 1
+    result = analyze_snapshot(s)
+    assert not any(
+        d["rule"] == "singleton-state"
+        for d in result["deductions"]
+    )
+
+
+def test_membership_hypothesis_can_forbid_a_cell_without_assigning_it():
+    board = BoardState.from_snapshot(empty_snapshot())
+    board.assign(1, (0, 0))
+
+    option = {
+        "type": "state_cell_membership",
+        "state": 1,
+        "cell0": (0, 1),
+        "cell": [1, 2],
+        "value": False,
+        "description": "r1c2 is not in State 1",
+    }
+    child = apply_option(board, option)
+
+    assert child.state_at((0, 1)) is None
+    assert child.is_forbidden(1, (0, 1))
+    assert not board.is_forbidden(1, (0, 1))
+
+
+def test_blank_board_lookahead_starts_with_direct_propagation():
+    board = BoardState.from_snapshot(empty_snapshot())
+    result = analyze_lookahead(board, depth=2, time_budget=3.0, max_nodes=12)
+
+    assert result["status"] == "propagation"
+    action_types = {action["type"] for action in result["actions"]}
+    assert "zero_capitol" in action_types
+    assert "singleton_capitol" in action_types
