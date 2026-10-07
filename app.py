@@ -9,6 +9,7 @@ from solver.model import BoardState
 from solver.candidates import analyze_state_domain
 from solver.lookahead import analyze_lookahead, solve_logically
 from solver.knowledge import propagate_knowledge
+from solver.search import search_for_solution
 
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=None)
@@ -69,6 +70,25 @@ def knowledge_api():
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
         app.logger.exception("Unexpected solver error")
+        return jsonify({"error": "Internal solver error: " + str(exc)}), 500
+
+
+@app.post("/api/search")
+def search_api():
+    try:
+        payload = _json_payload()
+        board = BoardState.from_snapshot(payload)
+        return jsonify(
+            search_for_solution(
+                board,
+                time_budget=float(payload.get("time_budget", 30.0)),
+                max_nodes=int(payload.get("max_nodes", 5000)),
+            )
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("Unexpected solver search error")
         return jsonify({"error": "Internal solver error: " + str(exc)}), 500
 
 
