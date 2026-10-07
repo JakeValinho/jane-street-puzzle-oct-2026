@@ -206,6 +206,38 @@ def find_basic_contradiction(board: BoardState):
                     f"{candidate_model.reason}"
                 )
 
+        # If no currently available square touches the connected state, the
+        # state is closed: it can never grow again. Its present shape must
+        # therefore already be a complete legal state, including its capitol.
+        frontier_available = False
+        cell_set = set(cells)
+        for r, c in cells:
+            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                neighbor = (r + dr, c + dc)
+                if not (0 <= neighbor[0] < N and 0 <= neighbor[1] < N):
+                    continue
+                if neighbor in cell_set:
+                    continue
+                if (
+                    board.state_at(neighbor) is None
+                    and not board.is_forbidden(state_id, neighbor)
+                ):
+                    frontier_available = True
+                    break
+            if frontier_available:
+                break
+
+        if not frontier_available:
+            geometry = analyze_shape(cell_set)
+            if not geometry["valid"]:
+                return f"Closed State {state_id} is not a legal connected symmetric state."
+            marked = board.marked_capitol_cell(state_id)
+            if marked is not None and geometry["capitol"] != marked:
+                return (
+                    f"Closed State {state_id}'s symmetry-implied capitol "
+                    "does not match its known capitol."
+                )
+
     minimum_total_area = sum(
         _state_min_size(board, state_id)
         for state_id in board.state_cells
