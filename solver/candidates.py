@@ -402,6 +402,38 @@ class CandidateModel:
         if capitol is not None and CLUES.get(capitol, 0) > 0:
             return False
 
+        # If this candidate has a capitol, paths that stay inside the state
+        # give hard upper bounds on clue distances because every internal
+        # edge costs exactly the state's size. The same applies to a clue
+        # immediately outside the state: entering the state costs at most
+        # its size, then the internal route reaches the capitol.
+        if capitol is not None:
+            size = len(cells)
+            dist = {capitol: 0}
+            queue = [capitol]
+            for cur in queue:
+                r, c = cur
+                for dr, dc in DIRS:
+                    nxt = (r + dr, c + dc)
+                    if nxt in cells and nxt not in dist:
+                        dist[nxt] = dist[cur] + 1
+                        queue.append(nxt)
+
+            for clue_cell, target in CLUES.items():
+                if target == 0:
+                    continue
+                if clue_cell in cells:
+                    if target > dist[clue_cell] * size:
+                        return False
+                else:
+                    entry_lengths = [
+                        dist[nbr] + 1
+                        for nbr in ((clue_cell[0] + dr, clue_cell[1] + dc) for dr, dc in DIRS)
+                        if nbr in dist
+                    ]
+                    if entry_lengths and target > min(entry_lengths) * size:
+                        return False
+
         # Update only this state's completion and ensure each clue-1 still has
         # at least one possible adjacent singleton capitol.
         temp_assignments = self.board.assignments[:]
