@@ -5,7 +5,7 @@ from math import ceil
 
 from .model import BoardState
 from .puzzle import CLUES, N, index, label, neighbors
-from .constraints import forced_singleton_capitols, is_locked_singleton_capitol
+from .constraints import forced_singleton_capitols, is_locked_singleton_capitol, singleton_capitol_candidates
 from .candidates import analyze_state_domain
 
 
@@ -29,23 +29,6 @@ class Deduction:
         d["option_count"] = self.option_count
         return d
 
-
-def _candidate_singleton_capitol(board: BoardState, cell):
-    # A capitol square itself must have clue 0 if it is a numbered square.
-    if cell in CLUES and CLUES[cell] != 0:
-        return False
-
-    state_id = board.state_at(cell)
-    if state_id is not None and board.current_size(state_id) > 1:
-        return False
-
-    # If this were a singleton capitol, every adjacent numbered square could
-    # reach a capitol in cost 1, so none may have a clue greater than 1.
-    for adj in neighbors(cell):
-        if CLUES.get(adj, 0) > 1:
-            return False
-
-    return True
 
 
 def rule_contradictions(board: BoardState):
@@ -173,7 +156,14 @@ def rule_one_clues(board: BoardState):
         if value != 1:
             continue
 
-        candidates = [cell for cell in neighbors(clue_cell) if _candidate_singleton_capitol(board, cell)]
+        candidates = singleton_capitol_candidates(board, clue_cell)
+
+        # Once a proved singleton capitol is already adjacent, this clue is
+        # satisfied. Additional singleton capitols are allowed, so there is
+        # no unresolved "which one?" deduction left to make.
+        if any(is_locked_singleton_capitol(board, cell) for cell in candidates):
+            continue
+
         choices = [
             {"type": "singleton_capitol", "cell": [r + 1, c + 1]}
             for r, c in candidates
