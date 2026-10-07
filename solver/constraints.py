@@ -45,6 +45,11 @@ def singleton_capitol_candidates(board, clue_cell):
         if cell in CLUES and CLUES[cell] != 0:
             continue
 
+        # Independent clue-difference reasoning may already prove that the
+        # state containing this cell must have size greater than one.
+        if CELL_MIN_SIZES.get(cell, 1) > 1:
+            continue
+
         state_id = board.state_at(cell)
         if state_id is not None and board.current_size(state_id) > 1:
             continue
