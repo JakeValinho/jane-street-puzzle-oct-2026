@@ -30,6 +30,12 @@
   var showIds = document.getElementById('showIds');
   var showDistances = document.getElementById('showDistances');
   var capitolModeBtn = document.getElementById('capitolMode');
+  var solverStepBtn = document.getElementById('solverStep');
+  var solverOutput = document.getElementById('solverOutput');
+  var solverFocus = new Set();
+  var solverDeductions = [];
+  var solverCursor = 0;
+  var solverFingerprint = '';
 
   function idx(r, c) { return r * N + c; }
   function rc(i) { return [Math.floor(i / N), i % N]; }
@@ -73,6 +79,7 @@
     lastDistances = null;
     clueStatus = {};
     resultPanel.hidden = true;
+    solverFocus = new Set();
   }
 
   function colorFor(id) { return BASE_COLORS[(id - 1) % BASE_COLORS.length]; }
@@ -353,6 +360,7 @@
         var cell = document.createElement('div');
         cell.className = 'cell';
         cell.dataset.i = i;
+        if (solverFocus.has(i)) cell.classList.add('solver-focus');
 
         if (id == null) cell.classList.add('unassigned');
         else {
@@ -496,8 +504,99 @@
   window.addEventListener('pointerup', function () { dragging = false; });
   board.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
+  function solverBoardFingerprint() {
+    return JSON.stringify({
+      assignments: assignments,
+      manualCapitols: manualCapitols
+    });
+  }
+
+  function formatSolverChoice(choice) {
+    if (!choice) return '';
+    if (choice.type === 'singleton_capitol') return 'singleton capitol at r' + choice.cell[0] + 'c' + choice.cell[1];
+    if (choice.type === 'capitol_at') return 'capitol at r' + choice.cell[0] + 'c' + choice.cell[1];
+    if (choice.type === 'mark_capitol') return 'mark State ' + choice.state + ' capitol at r' + choice.cell[0] + 'c' + choice.cell[1];
+    if (choice.type === 'state_size_at_least') {
+      if (choice.state != null) return 'State ' + choice.state + ' size ≥ ' + choice.minimum;
+      return 'state containing r' + choice.cell[0] + 'c' + choice.cell[1] + ' has size ≥ ' + choice.minimum;
+    }
+    if (choice.type === 'state_size_parity') return 'State ' + choice.state + ' must finish ' + choice.parity + ' (at least ' + choice.minimum + ')';
+    return JSON.stringify(choice);
+  }
+
+  function showSolverDeduction(d, position, total) {
+    solverFocus = new Set();
+    (d.cells || []).forEach(function (cell) {
+      solverFocus.add(idx(cell[0] - 1, cell[1] - 1));
+    });
+
+    solverOutput.innerHTML = '';
+    var title = document.createElement('div');
+    title.className = 'solver-title';
+    title.textContent = d.title;
+    solverOutput.appendChild(title);
+
+    var explanation = document.createElement('div');
+    explanation.textContent = d.explanation;
+    solverOutput.appendChild(explanation);
+
+    if (d.choices && d.choices.length) {
+      var opts = document.createElement('div');
+      opts.className = 'solver-options';
+      opts.textContent = 'Options: ' + d.choices.map(formatSolverChoice).join(' | ');
+      solverOutput.appendChild(opts);
+    }
+
+    var meta = document.createElement('div');
+    meta.className = 'solver-meta';
+    meta.textContent = 'Deduction ' + position + ' of ' + total + ' · rule: ' + d.rule + ' · possible choices: ' + d.option_count;
+    solverOutput.appendChild(meta);
+    render();
+  }
+
+  async function pythonNextStep() {
+    var fp = solverBoardFingerprint();
+
+    if (fp === solverFingerprint && solverDeductions.length) {
+      solverCursor = (solverCursor + 1) % solverDeductions.length;
+      showSolverDeduction(solverDeductions[solverCursor], solverCursor + 1, solverDeductions.length);
+      return;
+    }
+
+    solverStepBtn.disabled = true;
+    solverOutput.textContent = 'Analyzing the current board...';
+    try {
+      var response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot())
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Solver request failed');
+
+      solverFingerprint = fp;
+      solverDeductions = result.deductions || [];
+      solverCursor = 0;
+
+      if (!solverDeductions.length) {
+        solverFocus = new Set();
+        solverOutput.textContent = 'No deduction is currently implemented for this position. This does not mean the puzzle has no logical next step; it means the Python rule library needs another deduction rule.';
+        render();
+        return;
+      }
+      showSolverDeduction(solverDeductions[0], 1, solverDeductions.length);
+    } catch (err) {
+      solverFocus = new Set();
+      solverOutput.textContent = 'Could not reach the Python solver. Run "python app.py" from the repo and open http://127.0.0.1:5000 instead of opening index.html directly.\n\n' + err.message;
+      render();
+    } finally {
+      solverStepBtn.disabled = false;
+    }
+  }
+
   document.getElementById('newState').addEventListener('click', addRegion);
   document.getElementById('check').addEventListener('click', validateAndCheck);
+  solverStepBtn.addEventListener('click', pythonNextStep);
   capitolModeBtn.addEventListener('click', function () { setCapitolMode(!capitolMode); });
   document.getElementById('undo').addEventListener('click', function () {
     if (!undoStack.length) return;
